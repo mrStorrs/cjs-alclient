@@ -4776,10 +4776,14 @@ export class Character extends Observer implements CharacterData {
 
         if (this.rip) throw new Error("We can't smartMove, we are dead.")
 
-        // If it's an event, try to join it
-        if (typeof to == "string" && this.S[to as MapName | MonsterName]?.join) {
+        // If it's an event, and the event is joinable, try to join it
+        if (
+            typeof to == "string" &&
+            this.S[to as MonsterName | MapName] &&
+            this.G.events[to as MonsterName | MapName]?.join
+        ) {
             try {
-                await this.join(to as MapName)
+                await this.join(to as MonsterName | MapName)
                 return
             } catch (e) {
                 if (options.showConsole) console.log(e)

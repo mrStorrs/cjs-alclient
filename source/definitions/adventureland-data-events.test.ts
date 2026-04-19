@@ -6,7 +6,7 @@ import type { GData } from "./adventureland-data"
  */
 
 test("G.events type validation", async () => {
-    const G_emotions: Pick<GData, "events"> = {
+    const G_events: Pick<GData, "events"> = {
         events: {
             abtesting: {
                 daily: true,
@@ -35,5 +35,5 @@ test("G.events type validation", async () => {
             },
         },
     }
-    expect(G_emotions).toBeDefined()
+    expect(G_events).toBeDefined()
 })
