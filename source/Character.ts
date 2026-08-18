@@ -66,6 +66,9 @@ import type {
     ProjectileSkillGRDataObject,
     GameResponseDataObject,
     ChannelInfo,
+    AbilityTimeoutData,
+    ClientToServerAbilityData,
+    ClientToServerEquipData,
     DisappearData,
     DisappearNotThereData,
     TradeHistoryData,
@@ -564,6 +567,34 @@ export class Character extends Observer implements CharacterData {
         if (this.G.skills[skill].share) this.nextSkill.set(this.G.skills[skill].share, next)
     }
 
+    protected handleAbilityTimeout(data: AbilityTimeoutData): void {
+        this.setNextSkill(data.name, new Date(Date.now() + Math.ceil(data.ms)))
+    }
+
+    protected registerCooldownListeners(): void {
+        this.socket.on("skill_timeout", (data: SkillTimeoutData) => this.handleAbilityTimeout(data))
+        this.socket.on("ability_timeout", (data: AbilityTimeoutData) => this.handleAbilityTimeout(data))
+    }
+
+    protected emitSkill(data: ClientToServerAbilityData): void {
+        if (this.G.protocol === 4) {
+            this.socket.emit("ability", data)
+        } else if (data.name === "attack") {
+            this.socket.emit("attack", { id: data.id })
+        } else {
+            this.socket.emit("skill", data)
+        }
+    }
+
+    protected emitEquip(data: ClientToServerEquipData): void {
+        const item = this.items[data.num]
+        if (this.G.protocol === 4 && item !== null && item !== undefined) {
+            this.socket.emit("equip", { ...data, item })
+        } else {
+            this.socket.emit("equip", data)
+        }
+    }
+
     protected updatePositions(): void {
         if (this.lastPositionUpdate) {
             const msSinceLastUpdate = Date.now() - this.lastPositionUpdate
@@ -774,10 +805,7 @@ export class Character extends Observer implements CharacterData {
             })
         }
 
-        this.socket.on("skill_timeout", (data: SkillTimeoutData) => {
-            const next = new Date(Date.now() + Math.ceil(data.ms))
-            this.setNextSkill(data.name, next)
-        })
+        this.registerCooldownListeners()
 
         this.socket.on("upgrade", (data: UpgradeData) => {
             if (data.type == "compound" && this.q.compound) delete this.q.compound
@@ -1098,7 +1126,7 @@ export class Character extends Observer implements CharacterData {
         if (!this.ready) throw new Error("We aren't ready yet [basicAttack].")
 
         const response = this.getResponsePromise("attack") as Promise<ProjectileSkillGRDataObject>
-        this.socket.emit("attack", { id: id })
+        this.emitSkill({ id: id, name: "attack" })
         return response
     }
 
@@ -2839,7 +2867,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("disappearing_text", cantEquipCheck)
         })
 
-        this.socket.emit("equip", { num: inventoryPos, slot: equipSlot })
+        this.emitEquip({ num: inventoryPos, slot: equipSlot })
         return equipFinished
     }
 
@@ -4403,7 +4431,7 @@ export class Character extends Observer implements CharacterData {
 
         try {
             const response = this.getResponsePromise("scare")
-            this.socket.emit("skill", { name: "scare" })
+            this.emitSkill({ name: "scare" })
             await response
         } finally {
             this.socket.off("ui", getIDs)
@@ -5412,7 +5440,7 @@ export class Character extends Observer implements CharacterData {
 
         try {
             const response = this.getResponsePromise("temporalsurge")
-            this.socket.emit("skill", { name: "temporalsurge" })
+            this.emitSkill({ name: "temporalsurge" })
             await response
         } finally {
             this.socket.off("game_response", getRespawnTimes)
@@ -5453,7 +5481,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("eval", cooldownCheck)
         })
 
-        this.socket.emit("skill", { id: target, name: "snowball", num: snowball })
+        this.emitSkill({ id: target, name: "snowball", num: snowball })
         return throwStarted
     }
 
@@ -5781,7 +5809,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("game_response", failCheck)
         })
 
-        this.socket.emit("equip", { consume: true, num: itemPos })
+        this.emitEquip({ consume: true, num: itemPos })
         return usedPotion
     }
 
@@ -5931,7 +5959,7 @@ export class Character extends Observer implements CharacterData {
         if (!this.ready) throw new Error("We aren't ready yet [zapperZap].")
 
         const response = this.getResponsePromise("zapperzap")
-        this.socket.emit("skill", { id: id, name: "zapperzap" })
+        this.emitSkill({ id: id, name: "zapperzap" })
         return response
     }
 

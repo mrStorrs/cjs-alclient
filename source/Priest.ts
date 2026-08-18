@@ -8,7 +8,7 @@ export class Priest extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [absorbSins].")
 
         const response = this.getResponsePromise("absorb")
-        this.socket.emit("skill", { id: target, name: "absorb" })
+        this.emitSkill({ id: target, name: "absorb" })
         return response
     }
 
@@ -16,7 +16,7 @@ export class Priest extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [curse].")
 
         const response = this.getResponsePromise("curse") as Promise<ProjectileSkillGRDataObject>
-        this.socket.emit("skill", { id: target, name: "curse" })
+        this.emitSkill({ id: target, name: "curse" })
         return response
     }
 
@@ -24,7 +24,7 @@ export class Priest extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [darkBlessing].")
 
         const response = this.getResponsePromise("darkblessing")
-        this.socket.emit("skill", { name: "darkblessing" })
+        this.emitSkill({ name: "darkblessing" })
         return response
     }
 
@@ -44,7 +44,7 @@ export class Priest extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [partyHeal].")
 
         const response = this.getResponsePromise("partyheal")
-        this.socket.emit("skill", { name: "partyheal" })
+        this.emitSkill({ name: "partyheal" })
         return response
     }
 
@@ -54,7 +54,7 @@ export class Priest extends PingCompensatedCharacter {
         if (essenceOfLife === undefined) throw new Error("We don't have any essenceoflife in our inventory.")
 
         const response = this.getResponsePromise("revive")
-        this.socket.emit("skill", { id: target, name: "revive", num: essenceOfLife })
+        this.emitSkill({ id: target, name: "revive", num: essenceOfLife })
         return response
     }
 }

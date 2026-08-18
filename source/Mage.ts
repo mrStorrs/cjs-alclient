@@ -10,7 +10,7 @@ export class Mage extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [alchemy].")
 
         const response = this.getResponsePromise("alchemy")
-        this.socket.emit("skill", { name: "alchemy" })
+        this.emitSkill({ name: "alchemy" })
         return response
     }
 
@@ -32,7 +32,7 @@ export class Mage extends PingCompensatedCharacter {
             throw new Error(`We cannot blink to ${this.map},${x},${y}`)
 
         const response = this.getResponsePromise("blink")
-        this.socket.emit("skill", { name: "blink", x: x, y: y })
+        this.emitSkill({ name: "blink", x: x, y: y })
         return response
     }
 
@@ -41,7 +41,7 @@ export class Mage extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [burst].")
 
         const response = this.getResponsePromise("burst")
-        this.socket.emit("skill", { id: target, name: "burst" })
+        this.emitSkill({ id: target, name: "burst" })
         return response
     }
 
@@ -55,7 +55,7 @@ export class Mage extends PingCompensatedCharacter {
         if (targets.length == 0) throw new Error("No targets were given to cburst.")
 
         const response = this.getResponsePromise("cburst")
-        this.socket.emit("skill", { name: "cburst", targets: targets })
+        this.emitSkill({ name: "cburst", targets: targets })
         return response
     }
 
@@ -63,7 +63,7 @@ export class Mage extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [energize].")
 
         const response = this.getResponsePromise("energize")
-        this.socket.emit("skill", { id: target, mp: mp, name: "energize" })
+        this.emitSkill({ id: target, mp: mp, name: "energize" })
         return response
     }
 
@@ -73,7 +73,7 @@ export class Mage extends PingCompensatedCharacter {
         if (essenceofnature === undefined) throw new Error("We need an essenceofnature in order to entangle.")
 
         const response = this.getResponsePromise("entangle")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "entangle",
             num: essenceofnature,
@@ -85,7 +85,7 @@ export class Mage extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [light].")
 
         const response = this.getResponsePromise("light")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "light",
         })
         return response
@@ -118,7 +118,7 @@ export class Mage extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("magiport")
-            this.socket.emit("skill", { id: target, name: "magiport" })
+            this.emitSkill({ id: target, name: "magiport" })
             await response
         } finally {
             this.socket.off("game_response", getMagiportStatus)
@@ -138,7 +138,7 @@ export class Mage extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [applyReflection].")
 
         const response = this.getResponsePromise("reflection")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "reflection",
         })

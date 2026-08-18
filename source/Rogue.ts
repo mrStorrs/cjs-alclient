@@ -9,7 +9,7 @@ export class Rogue extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [invis].")
 
         const response = this.getResponsePromise("invis")
-        this.socket.emit("skill", { name: "invis" })
+        this.emitSkill({ name: "invis" })
         return response
     }
 
@@ -26,7 +26,7 @@ export class Rogue extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("pickpocket")
-            this.socket.emit("skill", { id: target, name: "pickpocket" })
+            this.emitSkill({ id: target, name: "pickpocket" })
             await response
         } finally {
             this.socket.off("player", getTime)
@@ -39,7 +39,7 @@ export class Rogue extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [mentalBurst].")
 
         const response = this.getResponsePromise("mentalburst")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "mentalburst",
         })
@@ -52,7 +52,7 @@ export class Rogue extends PingCompensatedCharacter {
         if (poison === undefined) throw new Error("We don't have any poison in our inventory.")
 
         const response = this.getResponsePromise("pcoat")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "pcoat",
             num: poison,
         })
@@ -65,7 +65,7 @@ export class Rogue extends PingCompensatedCharacter {
         // TODO: Item checks
 
         const response = this.getResponsePromise("quickpunch")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "quickpunch",
         })
@@ -77,7 +77,7 @@ export class Rogue extends PingCompensatedCharacter {
         // TODO: Item checks
 
         const response = this.getResponsePromise("quickstab")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "quickstab",
         })
@@ -89,7 +89,7 @@ export class Rogue extends PingCompensatedCharacter {
 
         // TODO: Improve to check if we applied it on the given character
         const response = this.getResponsePromise("rspeed")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "rspeed",
         })
@@ -102,7 +102,7 @@ export class Rogue extends PingCompensatedCharacter {
         if (shadowstone === undefined) throw new Error("We need a shadowstone in order to shadowstrike.")
 
         const response = this.getResponsePromise("shadowstrike")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "shadowstrike",
             num: shadowstone,
         })

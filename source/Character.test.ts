@@ -9,6 +9,17 @@ import type { IPosition } from "./definitions/adventureland"
 let priest: Character
 let warrior: Character
 const serverData: ServerData = { region: "ASIA", name: "I", address: "test", path: "/test", players: 0, key: "ASIAI" }
+
+class Protocol4Character extends Character {
+    public emitFirstItem(): void {
+        this.emitEquip({ num: 0, slot: "mainhand" })
+    }
+
+    public listenForCooldowns(): void {
+        this.registerCooldownListeners()
+    }
+}
+
 beforeAll(async () => {
     await Game.getGData(true, false)
     await Pathfinder.prepare(Game.G)
@@ -1221,6 +1232,41 @@ test("Character.locateItems", async () => {
     expect(priest.locateItems("pants", priest.items, { levelGreaterThan: 0 }).length).toBe(1)
     expect(priest.locateItems("mpot0", priest.items, { quantityGreaterThan: 1 }).length).toBe(2)
     priest.items = itemsBackup
+})
+
+test("protocol 4 emits abilities and tracks ability timeouts", async () => {
+    const protocol4 = new Protocol4Character("", "", "", { ...Game.G, protocol: 4 }, serverData)
+    protocol4.ready = true
+    const emitted: unknown[][] = []
+    const listeners = new Map<string, Set<(data: unknown) => void>>()
+    const socket = {
+        emit: (...args: unknown[]) => emitted.push(args),
+        off: (event: string, listener: (data: unknown) => void) => listeners.get(event)?.delete(listener),
+        on: (event: string, listener: (data: unknown) => void) => {
+            const eventListeners = listeners.get(event) ?? new Set<(data: unknown) => void>()
+            eventListeners.add(listener)
+            listeners.set(event, eventListeners)
+        },
+    }
+    protocol4.socket = socket as unknown as typeof protocol4.socket
+
+    const attack = protocol4.basicAttack("goo-1")
+    expect(emitted).toContainEqual(["ability", { id: "goo-1", name: "attack" }])
+
+    protocol4.items = [{ name: "blade" }]
+    protocol4.emitFirstItem()
+    expect(emitted).toContainEqual(["equip", { item: { name: "blade" }, num: 0, slot: "mainhand" }])
+
+    protocol4.listenForCooldowns()
+    for (const listener of listeners.get("ability_timeout") ?? []) {
+        listener({ name: "attack", ms: 1000 })
+    }
+    expect(protocol4.getCooldown("attack")).toBeGreaterThan(0)
+
+    for (const listener of listeners.get("game_response") ?? []) {
+        listener({ place: "attack", response: "data", success: true })
+    }
+    await expect(attack).resolves.toMatchObject({ place: "attack" })
 })
 
 test("Character.locateItemsByLevel", () => {

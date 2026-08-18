@@ -6,6 +6,7 @@
 import type { IPosition, ItemType, SlotInfo, SlotType, TokenType, WeaponType } from "./adventureland.js"
 
 export type GData = {
+    protocol?: 3 | 4
     achievements: {
         [T in AchievementName]: {
             /** The achievement name (human readable) */

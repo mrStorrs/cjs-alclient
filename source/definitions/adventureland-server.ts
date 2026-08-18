@@ -1186,7 +1186,8 @@ export type ServerMessageData =
     | { color: string; discord: string; message: string }
     | { color: string; event: boolean; message: string }
 
-export type SkillTimeoutData = { name: SkillName; ms: number; penalty: number }
+export type SkillTimeoutData = { name: SkillName; ms: number; penalty?: number }
+export type AbilityTimeoutData = Pick<SkillTimeoutData, "name" | "ms">
 
 export type StartData = CharacterData & {
     info?: MapInfo
@@ -1297,6 +1298,7 @@ export type WelcomeData = {
 export type ServerToClientEvents = {
     achievement_progress: (data: AchievementProgressData) => void
     action: (data: ActionData) => void
+    ability_timeout: (data: AbilityTimeoutData) => void
     chat_log: (data: ChatLogData) => void
     chest_opened: (data: ChestOpenedData) => void
     cm: (data: CMData) => void
@@ -1410,7 +1412,15 @@ export type ClientToServerSkillData =
     | { name: Extract<SkillName, "cburst">; targets: [string, number][] }
     | { name: Extract<SkillName, "energize">; id: string; mp: number }
 
+export type ClientToServerAbilityData = ClientToServerSkillData | { name: "attack"; id: string }
+
+export type ClientToServerEquipData =
+    | { num: number; slot: SlotType }
+    | { consume: true; num: number }
+    | { num: number; price: number; q: number; slot: TradeSlotType }
+
 export type ClientToServerEvents = {
+    ability: (data: ClientToServerAbilityData) => void
     attack: (data: { id: string }) => void
     auth: (data: AuthData) => void
     // TODO: Create BankData type
@@ -1444,12 +1454,7 @@ export type ClientToServerEvents = {
     donate: (donation: { gold: number }) => void
     emotion: (data: { name: EmotionName }) => void
     enter: (data: { name: string; place: MapName }) => void
-    equip: (
-        data:
-            | { num: number; slot: SlotType }
-            | { consume: true; num: number }
-            | { num: number; price: number; q: number; slot: TradeSlotType },
-    ) => void
+    equip: (data: ClientToServerEquipData & { item?: ItemData }) => void
     equip_batch: (data: { num: number; slot: SlotType }[]) => void
     eval: (data: { command: string }) => void
     exchange: (data: { item_num: number; q?: number }) => void
