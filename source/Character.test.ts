@@ -20,6 +20,12 @@ class Protocol4Character extends Character {
     }
 }
 
+class Protocol4Game extends Game {
+    public static prepare(gameData: Parameters<typeof this.prepareProtocol4GameData>[0]) {
+        return this.prepareProtocol4GameData(gameData)
+    }
+}
+
 beforeAll(async () => {
     await Game.getGData(true, false)
     await Pathfinder.prepare(Game.G)
@@ -1234,7 +1240,14 @@ test("Character.locateItems", async () => {
     priest.items = itemsBackup
 })
 
-test("protocol 4 emits abilities and tracks ability timeouts", async () => {
+test("protocol 4 prepares game data, emits abilities, and tracks ability timeouts", async () => {
+    const gameData = { abilities: { attack: { cooldown: 800 } }, protocol: 4 } as unknown as Parameters<
+        typeof Protocol4Game.prepare
+    >[0]
+    const prepared = Protocol4Game.prepare(gameData)
+    expect(prepared.classes.warrior.damage_type).toBe("physical")
+    expect(prepared.skills.attack).toMatchObject({ cooldown: 800 })
+
     const protocol4 = new Protocol4Character("", "", "", { ...Game.G, protocol: 4 }, serverData)
     protocol4.ready = true
     const emitted: unknown[][] = []
@@ -1262,6 +1275,7 @@ test("protocol 4 emits abilities and tracks ability timeouts", async () => {
         listener({ name: "attack", ms: 1000 })
     }
     expect(protocol4.getCooldown("attack")).toBeGreaterThan(0)
+    expect(protocol4.canUse("attack")).toBe(false)
 
     for (const listener of listeners.get("game_response") ?? []) {
         listener({ place: "attack", response: "data", success: true })
