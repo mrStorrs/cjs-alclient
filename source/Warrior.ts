@@ -18,7 +18,7 @@ export class Warrior extends PingCompensatedCharacter {
         this.socket.on("ui", getIDs)
         try {
             const response = this.getResponsePromise("agitate")
-            this.socket.emit("skill", { name: "agitate" })
+            this.emitSkill({ name: "agitate" })
             await response
         } finally {
             this.socket.off("ui", getIDs)
@@ -31,7 +31,7 @@ export class Warrior extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [charge].")
 
         const response = this.getResponsePromise("charge")
-        this.socket.emit("skill", { name: "charge" })
+        this.emitSkill({ name: "charge" })
         return response
     }
 
@@ -43,7 +43,7 @@ export class Warrior extends PingCompensatedCharacter {
 
         // TODO: Get IDs of cleaved monsters, or the projectiles
         const response = this.getResponsePromise("cleave")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "cleave",
         })
         return response
@@ -67,7 +67,7 @@ export class Warrior extends PingCompensatedCharacter {
         else if (dist > 50) throw new Error("dash location is too far (max dist: 50)")
 
         const response = this.getResponsePromise("dash")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "dash",
             x: to.x,
             y: to.y,
@@ -79,7 +79,7 @@ export class Warrior extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [hardshell].")
 
         const response = this.getResponsePromise("hardshell")
-        this.socket.emit("skill", {
+        this.emitSkill({
             name: "hardshell",
         })
         return response
@@ -95,7 +95,7 @@ export class Warrior extends PingCompensatedCharacter {
             throw new Error("We need to have a 'basher' type weapon equipped in order to stomp.")
 
         const stomped = this.getResponsePromise("stomp")
-        this.socket.emit("skill", { name: "stomp" })
+        this.emitSkill({ name: "stomp" })
         return stomped
     }
 
@@ -109,7 +109,7 @@ export class Warrior extends PingCompensatedCharacter {
 
         const response = this.getResponsePromise("taunt") as Promise<ProjectileSkillGRDataObject>
 
-        this.socket.emit("skill", { id: target, name: "taunt" })
+        this.emitSkill({ id: target, name: "taunt" })
 
         return response
     }
@@ -119,7 +119,7 @@ export class Warrior extends PingCompensatedCharacter {
 
         // TODO: Return ids affected
         const response = this.getResponsePromise("warcry")
-        this.socket.emit("skill", { name: "warcry" })
+        this.emitSkill({ name: "warcry" })
         return response
     }
 }

@@ -29,13 +29,14 @@ export class Merchant extends PingCompensatedCharacter {
 
         // Start fishing
         const started = this.getResponsePromise("fishing")
-        this.socket.emit("skill", { name: "fishing" })
+        this.emitSkill({ name: "fishing" })
         return started.then(() => {
             return new Promise<string>((resolve, reject) => {
                 const cleanup = () => {
                     this.socket.off("ui", noneCheck)
                     this.socket.off("game_log", logCheck)
                     this.socket.off("skill_timeout", cooldownCheck)
+                    this.socket.off("ability_timeout", cooldownCheck)
                     clearTimeout(timeout)
                 }
 
@@ -68,6 +69,7 @@ export class Merchant extends PingCompensatedCharacter {
                 this.socket.on("ui", noneCheck)
                 this.socket.on("game_log", logCheck)
                 this.socket.on("skill_timeout", cooldownCheck)
+                this.socket.on("ability_timeout", cooldownCheck)
             })
         })
     }
@@ -213,7 +215,7 @@ export class Merchant extends PingCompensatedCharacter {
             this.socket.on("player", successCheck)
         })
 
-        this.socket.emit("equip", {
+        this.emitEquip({
             num: itemPos,
             price: price,
             q: quantity,
@@ -304,7 +306,7 @@ export class Merchant extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [merchantCourage].")
 
         const response = this.getResponsePromise("mcourage")
-        this.socket.emit("skill", { name: "mcourage" })
+        this.emitSkill({ name: "mcourage" })
         return response
     }
 
@@ -315,13 +317,14 @@ export class Merchant extends PingCompensatedCharacter {
 
         // Start mining
         const started = this.getResponsePromise("mining")
-        this.socket.emit("skill", { name: "mining" })
+        this.emitSkill({ name: "mining" })
         return started.then(() => {
             return new Promise<string>((resolve, reject) => {
                 const cleanup = () => {
                     this.socket.off("ui", noneCheck)
                     this.socket.off("game_log", logCheck)
                     this.socket.off("skill_timeout", cooldownCheck)
+                    this.socket.off("ability_timeout", cooldownCheck)
                     clearTimeout(timeout)
                 }
 
@@ -354,6 +357,7 @@ export class Merchant extends PingCompensatedCharacter {
                 this.socket.on("ui", noneCheck)
                 this.socket.on("game_log", logCheck)
                 this.socket.on("skill_timeout", cooldownCheck)
+                this.socket.on("ability_timeout", cooldownCheck)
             })
         })
     }
@@ -376,7 +380,7 @@ export class Merchant extends PingCompensatedCharacter {
         }
 
         const response = this.getResponsePromise("mluck")
-        this.socket.emit("skill", { id: target, name: "mluck" })
+        this.emitSkill({ id: target, name: "mluck" })
         return response
     }
 
@@ -385,7 +389,7 @@ export class Merchant extends PingCompensatedCharacter {
         if (this.s.massproduction) return // We already have it active
 
         const response = this.getResponsePromise("massproduction")
-        this.socket.emit("skill", { name: "massproduction" })
+        this.emitSkill({ name: "massproduction" })
         return response
     }
 
@@ -394,7 +398,7 @@ export class Merchant extends PingCompensatedCharacter {
         if (this.s.massproductionpp) return // We already have it active
 
         const response = this.getResponsePromise("massproductionpp")
-        this.socket.emit("skill", { name: "massproductionpp" })
+        this.emitSkill({ name: "massproductionpp" })
         return response
     }
 
@@ -403,7 +407,7 @@ export class Merchant extends PingCompensatedCharacter {
         if (this.s.massexchange) return // We already have it active
 
         const response = this.getResponsePromise("massexchange")
-        this.socket.emit("skill", { name: "massexchange" })
+        this.emitSkill({ name: "massexchange" })
         return response
     }
 
@@ -412,7 +416,7 @@ export class Merchant extends PingCompensatedCharacter {
         if (this.s.massexchangepp) return // We already have it active
 
         const response = this.getResponsePromise("massexchangepp")
-        this.socket.emit("skill", { name: "massexchangepp" })
+        this.emitSkill({ name: "massexchangepp" })
         return response
     }
 }
