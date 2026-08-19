@@ -4,7 +4,6 @@ import type {
     GameLogData,
     GameResponseData,
     SkillTimeoutData,
-    UIData,
     UIDataFishingMining,
 } from "./definitions/adventureland-server.js"
 import type { TradeSlotType } from "./definitions/adventureland.js"
@@ -308,58 +307,6 @@ export class Merchant extends PingCompensatedCharacter {
         const response = this.getResponsePromise("mcourage")
         this.emitSkill({ name: "mcourage" })
         return response
-    }
-
-    public async mine(): Promise<string> {
-        if (!this.ready) throw new Error("We aren't ready yet [mine].")
-        if (this.c.mining) return // We're already mining
-        // TODO: Add area check if we can mine here
-
-        // Start mining
-        const started = this.getResponsePromise("mining")
-        this.emitSkill({ name: "mining" })
-        return started.then(() => {
-            return new Promise<string>((resolve, reject) => {
-                const cleanup = () => {
-                    this.socket.off("ui", noneCheck)
-                    this.socket.off("game_log", logCheck)
-                    this.socket.off("skill_timeout", cooldownCheck)
-                    this.socket.off("ability_timeout", cooldownCheck)
-                    clearTimeout(timeout)
-                }
-
-                const noneCheck = (data: UIData) => {
-                    if (data.type == "mining_none") {
-                        cleanup()
-                        resolve("We didn't mine anything.")
-                    }
-                }
-
-                let log: string
-                const logCheck = (data: GameLogData) => {
-                    if (typeof data !== "object") return
-                    const mineRegex = /^Mined an* .+/.exec(data.message)
-                    if (mineRegex) log = mineRegex[0]
-                }
-
-                const cooldownCheck = (data: SkillTimeoutData) => {
-                    if (data.name == "mining") {
-                        cleanup()
-                        resolve(log)
-                    }
-                }
-
-                const timeout = setTimeout(() => {
-                    cleanup()
-                    reject(new Error("mine timeout (20000ms)"))
-                }, 20000)
-
-                this.socket.on("ui", noneCheck)
-                this.socket.on("game_log", logCheck)
-                this.socket.on("skill_timeout", cooldownCheck)
-                this.socket.on("ability_timeout", cooldownCheck)
-            })
-        })
     }
 
     public async mluck(target: string): Promise<unknown> {

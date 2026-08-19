@@ -1,10 +1,14 @@
 import { Game } from "./Game"
 import { Character } from "./Character"
+import { Merchant } from "./Merchant"
+import { Mage } from "./Mage"
 import type { ServerData } from "./definitions/adventureland-server"
 import { Entity } from "./Entity"
 import { Pathfinder } from "./Pathfinder"
 import type { MapName } from "./definitions/adventureland-data"
 import type { IPosition } from "./definitions/adventureland"
+import { Constants } from "./Constants"
+import { jest } from "@jest/globals"
 
 let priest: Character
 let warrior: Character
@@ -1281,6 +1285,422 @@ test("protocol 4 prepares game data, emits abilities, and tracks ability timeout
         listener({ place: "attack", response: "data", success: true })
     }
     await expect(attack).resolves.toMatchObject({ place: "attack" })
+})
+
+type TestSocketListener = (data: unknown) => void
+
+function prepareMiningSocket(character: Character) {
+    const emitted: unknown[][] = []
+    const listeners = new Map<string, Set<TestSocketListener>>()
+    const removed: string[] = []
+    let emitError: Error | undefined
+    const socket = {
+        emit: (...args: unknown[]) => {
+            if (emitError) {
+                const error = emitError
+                emitError = undefined
+                throw error
+            }
+            emitted.push(args)
+        },
+        off: (event: string, listener: TestSocketListener) => {
+            if (listeners.get(event)?.delete(listener)) removed.push(event)
+        },
+        on: (event: string, listener: TestSocketListener) => {
+            const eventListeners = listeners.get(event) ?? new Set<TestSocketListener>()
+            eventListeners.add(listener)
+            listeners.set(event, eventListeners)
+        },
+    }
+    character.socket = socket as unknown as typeof character.socket
+    character.ready = true
+    character.c = {}
+
+    return {
+        dispatch(event: string, data?: unknown) {
+            for (const listener of [...(listeners.get(event) ?? [])]) listener(data)
+        },
+        emitted,
+        failNextEmit(error: Error) {
+            emitError = error
+        },
+        listenerCount(event: string) {
+            return listeners.get(event)?.size ?? 0
+        },
+        removed,
+    }
+}
+
+function newProtocol4Character(): Character {
+    return new Protocol4Character("", "", "", { ...Game.G, protocol: 4 }, serverData)
+}
+
+async function acceptMiningStart(
+    socket: ReturnType<typeof prepareMiningSocket>,
+    rockId: string,
+    duration = 5000,
+): Promise<void> {
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        success: false,
+        in_progress: true,
+        rock_id: rockId,
+        duration,
+    })
+    await Promise.resolve()
+}
+
+function expectNoMiningListeners(socket: ReturnType<typeof prepareMiningSocket>): void {
+    expect(socket.listenerCount("game_response")).toBe(0)
+    expect(socket.listenerCount("disappear")).toBe(0)
+    expect(socket.listenerCount("disconnect")).toBe(0)
+    expect(socket.listenerCount("disconnect_reason")).toBe(0)
+}
+
+test("Character owns the one universal Mining method inherited by Merchant", () => {
+    expect(typeof Character.prototype.mine).toBe("function")
+    expect(Merchant.prototype.mine).toBe(Character.prototype.mine)
+    expect(Mage.prototype.mine).toBe(Character.prototype.mine)
+    expect(Object.prototype.hasOwnProperty.call(Merchant.prototype, "mine")).toBe(false)
+    expect(Object.prototype.hasOwnProperty.call(Mage.prototype, "mine")).toBe(false)
+})
+
+test("Character.mine emits exact omitted and explicit Protocol 4 targets", async () => {
+    const omittedCharacter = new Merchant("", "", "", { ...Game.G, protocol: 4 }, serverData)
+    const omittedSocket = prepareMiningSocket(omittedCharacter)
+    const omitted = omittedCharacter.mine()
+    expect(omittedSocket.emitted).toEqual([["ability", { name: "mining" }]])
+    await acceptMiningStart(omittedSocket, "copper-1")
+    omittedSocket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "copper-1",
+    })
+    await expect(omitted).resolves.toEqual({ outcome: "failure", rockId: "copper-1" })
+    expectNoMiningListeners(omittedSocket)
+
+    const explicitCharacter = new Mage("", "", "", { ...Game.G, protocol: 4 }, serverData)
+    const explicitSocket = prepareMiningSocket(explicitCharacter)
+    const explicit = explicitCharacter.mine("gold-2")
+    expect(explicitSocket.emitted).toEqual([["ability", { name: "mining", id: "gold-2" }]])
+    await acceptMiningStart(explicitSocket, "gold-2")
+    explicitSocket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "success",
+        rock_id: "gold-2",
+        ore: "goldore",
+        xp: 175,
+        bonus: "gem0",
+        bonus_omitted: false,
+        available_at: 1_787_123_456_789,
+        future_field: true,
+    })
+    await expect(explicit).resolves.toEqual({
+        outcome: "success",
+        rockId: "gold-2",
+        ore: "goldore",
+        xp: 175,
+        bonus: "gem0",
+        availableAt: 1_787_123_456_789,
+    })
+    expectNoMiningListeners(explicitSocket)
+})
+
+test("Character.mine resolves failure and cancellation as terminal results", async () => {
+    const failureCharacter = newProtocol4Character()
+    const failureSocket = prepareMiningSocket(failureCharacter)
+    const failure = failureCharacter.mine("iron-1")
+    await acceptMiningStart(failureSocket, "iron-1")
+    failureSocket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "iron-1",
+    })
+    await expect(failure).resolves.toEqual({ outcome: "failure", rockId: "iron-1" })
+    expectNoMiningListeners(failureSocket)
+
+    const cancelledCharacter = newProtocol4Character()
+    const cancelledSocket = prepareMiningSocket(cancelledCharacter)
+    const cancelled = cancelledCharacter.mine("runite-3")
+    await acceptMiningStart(cancelledSocket, "runite-3")
+    cancelledSocket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "cancelled",
+        rock_id: "runite-3",
+        reason: "moved",
+    })
+    await expect(cancelled).resolves.toEqual({ outcome: "cancelled", rockId: "runite-3", reason: "moved" })
+    expectNoMiningListeners(cancelledSocket)
+})
+
+test("Character.mine ignores unrelated explicit-rock terminal events", async () => {
+    const character = newProtocol4Character()
+    const socket = prepareMiningSocket(character)
+    let settled = false
+    const mining = character.mine("gold-2")
+    mining.then(
+        () => {
+            settled = true
+        },
+        () => {
+            settled = true
+        },
+    )
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "gold-1",
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    await acceptMiningStart(socket, "gold-2")
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "success",
+        rock_id: "gold-1",
+        ore: "goldore",
+        xp: 175,
+        available_at: 1_787_123_456_789,
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(socket.listenerCount("game_response")).toBe(1)
+
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "gold-2",
+    })
+    await expect(mining).resolves.toEqual({ outcome: "failure", rockId: "gold-2" })
+    expectNoMiningListeners(socket)
+})
+
+test("Character.mine binds an omitted target to the rock selected by its start response", async () => {
+    const character = newProtocol4Character()
+    const socket = prepareMiningSocket(character)
+    let settled = false
+    const mining = character.mine().finally(() => {
+        settled = true
+    })
+    await acceptMiningStart(socket, "copper-2")
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "copper-1",
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "copper-2",
+    })
+    await expect(mining).resolves.toEqual({ outcome: "failure", rockId: "copper-2" })
+    expectNoMiningListeners(socket)
+})
+
+test("Character.mine guards invalid calls before emitting or listening", async () => {
+    const invalidCharacter = newProtocol4Character()
+    const invalidSocket = prepareMiningSocket(invalidCharacter)
+    await expect(invalidCharacter.mine(" ")).rejects.toThrow("non-empty rock ID")
+    await expect(invalidCharacter.mine(4 as unknown as string)).rejects.toThrow("non-empty rock ID")
+    expect(invalidSocket.emitted).toHaveLength(0)
+    expectNoMiningListeners(invalidSocket)
+
+    invalidCharacter.ready = false
+    await expect(invalidCharacter.mine()).rejects.toThrow("ready")
+    expect(invalidSocket.emitted).toHaveLength(0)
+    expectNoMiningListeners(invalidSocket)
+
+    const busyCharacter = newProtocol4Character()
+    const busySocket = prepareMiningSocket(busyCharacter)
+    busyCharacter.c.mining = { ms: 1000, len: 5000, rock_id: "copper-1" }
+    await expect(busyCharacter.mine()).rejects.toThrow("already mining")
+    expect(busySocket.emitted).toHaveLength(0)
+    expectNoMiningListeners(busySocket)
+})
+
+test("Character.mine rejects a second invocation before the first start acknowledgement", async () => {
+    const character = newProtocol4Character()
+    const socket = prepareMiningSocket(character)
+
+    const first = character.mine("gold-2")
+    await expect(character.mine("gold-2")).rejects.toThrow("already mining")
+    expect(socket.emitted).toEqual([["ability", { name: "mining", id: "gold-2" }]])
+    expect(socket.listenerCount("game_response")).toBe(1)
+
+    await acceptMiningStart(socket, "gold-2")
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "failure",
+        rock_id: "gold-2",
+    })
+    await expect(first).resolves.toEqual({ outcome: "failure", rockId: "gold-2" })
+    expectNoMiningListeners(socket)
+
+    const next = character.mine("gold-2")
+    expect(socket.emitted).toHaveLength(2)
+    socket.dispatch("game_response", { response: "in_progress", place: "mining", failed: true })
+    await expect(next).rejects.toThrow("start failed")
+    expectNoMiningListeners(socket)
+})
+
+test("Character.mine rejects start failures and cleans only its listeners", async () => {
+    const character = newProtocol4Character()
+    const socket = prepareMiningSocket(character)
+    const unrelated = () => undefined
+    character.socket.on("game_response", unrelated)
+
+    const mining = character.mine("adamantite-1")
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        failed: true,
+        reason: "mining_level",
+    })
+    await expect(mining).rejects.toThrow("mining_level")
+    expect(socket.listenerCount("game_response")).toBe(1)
+    expect(socket.removed.filter((event) => event === "game_response")).toHaveLength(1)
+    expect(socket.removed.filter((event) => event === "disconnect")).toHaveLength(1)
+    expect(socket.removed.filter((event) => event === "disconnect_reason")).toHaveLength(1)
+    character.socket.off("game_response", unrelated)
+    expectNoMiningListeners(socket)
+})
+
+test("Character.mine owns cleanup for pre-start disconnects and synchronous emit failures", async () => {
+    jest.useFakeTimers()
+    try {
+        const disconnectedCharacter = newProtocol4Character()
+        const disconnectedSocket = prepareMiningSocket(disconnectedCharacter)
+        const disconnected = disconnectedCharacter.mine("iron-2")
+        disconnectedSocket.dispatch("disconnect_reason", "transport close")
+        await expect(disconnected).rejects.toThrow("before receiving a start response")
+        expectNoMiningListeners(disconnectedSocket)
+        expect(disconnectedSocket.removed.filter((event) => event === "game_response")).toHaveLength(1)
+        expect(disconnectedSocket.removed.filter((event) => event === "disconnect")).toHaveLength(1)
+        expect(disconnectedSocket.removed.filter((event) => event === "disconnect_reason")).toHaveLength(1)
+        expect(jest.getTimerCount()).toBe(0)
+
+        const emitFailureCharacter = newProtocol4Character()
+        const emitFailureSocket = prepareMiningSocket(emitFailureCharacter)
+        emitFailureSocket.failNextEmit(new Error("socket closed"))
+        await expect(emitFailureCharacter.mine("iron-3")).rejects.toThrow("emit failed")
+        expectNoMiningListeners(emitFailureSocket)
+        expect(emitFailureSocket.removed.filter((event) => event === "game_response")).toHaveLength(1)
+        expect(emitFailureSocket.removed.filter((event) => event === "disconnect")).toHaveLength(1)
+        expect(emitFailureSocket.removed.filter((event) => event === "disconnect_reason")).toHaveLength(1)
+        expect(jest.getTimerCount()).toBe(0)
+    } finally {
+        jest.useRealTimers()
+    }
+})
+
+test("Character.mine rejects malformed terminal responses and disconnects with complete cleanup", async () => {
+    const malformedCharacter = newProtocol4Character()
+    const malformedSocket = prepareMiningSocket(malformedCharacter)
+    const malformed = malformedCharacter.mine("mithril-2")
+    await acceptMiningStart(malformedSocket, "mithril-2")
+    malformedSocket.dispatch("game_response", {
+        response: "data",
+        place: "mining",
+        cevent: true,
+        outcome: "success",
+        rock_id: "mithril-2",
+        xp: Number.NaN,
+    })
+    await expect(malformed).rejects.toThrow("malformed")
+    expectNoMiningListeners(malformedSocket)
+
+    const disconnectedCharacter = newProtocol4Character()
+    const disconnectedSocket = prepareMiningSocket(disconnectedCharacter)
+    const disconnected = disconnectedCharacter.mine("copper-2")
+    await acceptMiningStart(disconnectedSocket, "copper-2")
+    disconnectedSocket.dispatch("disconnect", "transport close")
+    await expect(disconnected).rejects.toThrow("disconnected")
+    expectNoMiningListeners(disconnectedSocket)
+})
+
+test.each([
+    {
+        name: "missing rock ID",
+        terminal: { response: "data", place: "mining", cevent: true, outcome: "success" },
+    },
+    {
+        name: "invalid outcome",
+        terminal: {
+            response: "data",
+            place: "mining",
+            cevent: true,
+            outcome: "unexpected",
+            rock_id: "copper-1",
+        },
+    },
+    {
+        name: "invalid response discriminator",
+        terminal: {
+            response: "other",
+            place: "mining",
+            cevent: true,
+            outcome: "failure",
+            rock_id: "copper-1",
+        },
+    },
+])("Character.mine rejects a malformed terminal with $name", async ({ terminal }) => {
+    const character = newProtocol4Character()
+    const socket = prepareMiningSocket(character)
+    const mining = character.mine("copper-1")
+    await acceptMiningStart(socket, "copper-1")
+    socket.dispatch("game_response", terminal)
+    await expect(mining).rejects.toThrow("malformed terminal")
+    expectNoMiningListeners(socket)
+})
+
+test("Character.mine times out after the five-second attempt plus network tolerance", async () => {
+    jest.useFakeTimers()
+    try {
+        const character = newProtocol4Character()
+        const socket = prepareMiningSocket(character)
+        const mining = character.mine("copper-3")
+        await acceptMiningStart(socket, "copper-3")
+
+        jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
+        await expect(mining).rejects.toThrow(`timeout (${Constants.CONNECT_TIMEOUT_MS}ms)`)
+        expectNoMiningListeners(socket)
+        expect(jest.getTimerCount()).toBe(0)
+
+        const startCharacter = newProtocol4Character()
+        const startSocket = prepareMiningSocket(startCharacter)
+        const start = startCharacter.mine("copper-1")
+        jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
+        await expect(start).rejects.toThrow(`start timeout (${Constants.CONNECT_TIMEOUT_MS}ms)`)
+        expectNoMiningListeners(startSocket)
+        expect(jest.getTimerCount()).toBe(0)
+    } finally {
+        jest.useRealTimers()
+    }
 })
 
 test("Character.locateItemsByLevel", () => {
