@@ -122,3 +122,28 @@ async function run() {
 }
 run()
 ```
+
+### Mining API
+
+Every `Character` subclass, including `Merchant`, inherits the same targeted
+Mining method:
+
+```typescript
+const result = await ranger.mine("copper-1")
+const nearestResult = await ranger.mine()
+```
+
+`mine(rockId?)` sends the Protocol 4 Mining ability request. Pass a stable rock
+ID to target that rock, or omit the argument to let the game select the nearest
+eligible available rock. The server remains authoritative for map, range,
+Mining level, pickaxe, inventory, success, rewards, and account-private rock
+state; the client does not search or simulate those rules.
+
+The returned `MiningResult` has an `outcome` of `success`, `failure`, or
+`cancelled`, plus the terminal `rockId`. Successful results can include `ore`,
+`xp`, `bonus`, and `availableAt`; cancelled results can include a `reason`.
+Readiness, invalid IDs, start rejection, disconnects, malformed responses, and
+timeouts reject the promise. Each invocation owns and removes its listeners
+after every terminal path. Account-scoped rock timestamps are also exposed by
+the `mining_state` socket event as a `{ rocks: Record<string, number> }`
+payload.

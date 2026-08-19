@@ -66,10 +66,15 @@ import type {
     ProjectileSkillGRDataObject,
     GameResponseDataObject,
     ChannelInfo,
+    AbilityTimeoutData,
+    ClientToServerAbilityData,
+    ClientToServerEquipData,
     DisappearData,
     DisappearNotThereData,
     TradeHistoryData,
     DestroyGRDataObject,
+    MiningResult,
+    MiningTerminalGRDataObject,
 } from "./definitions/adventureland-server.js"
 import type { LinkData } from "./definitions/pathfinder.js"
 import { Constants } from "./Constants.js"
@@ -100,6 +105,7 @@ export class Character extends Observer implements CharacterData {
     public userAuth: string
     public characterID: string
     public timeouts = new Map<string, ReturnType<typeof setTimeout>>()
+    private miningRequestActive = false
 
     public achievements = new Map<string, AchievementProgressData>()
     public get bank(): BankInfo {
@@ -564,6 +570,34 @@ export class Character extends Observer implements CharacterData {
         if (this.G.skills[skill].share) this.nextSkill.set(this.G.skills[skill].share, next)
     }
 
+    protected handleAbilityTimeout(data: AbilityTimeoutData): void {
+        this.setNextSkill(data.name, new Date(Date.now() + Math.ceil(data.ms)))
+    }
+
+    protected registerCooldownListeners(): void {
+        this.socket.on("skill_timeout", (data: SkillTimeoutData) => this.handleAbilityTimeout(data))
+        this.socket.on("ability_timeout", (data: AbilityTimeoutData) => this.handleAbilityTimeout(data))
+    }
+
+    protected emitSkill(data: ClientToServerAbilityData): void {
+        if (this.G.protocol === 4) {
+            this.socket.emit("ability", data)
+        } else if (data.name === "attack") {
+            this.socket.emit("attack", { id: data.id })
+        } else {
+            this.socket.emit("skill", data)
+        }
+    }
+
+    protected emitEquip(data: ClientToServerEquipData): void {
+        const item = this.items[data.num]
+        if (this.G.protocol === 4 && item !== null && item !== undefined) {
+            this.socket.emit("equip", { ...data, item })
+        } else {
+            this.socket.emit("equip", data)
+        }
+    }
+
     protected updatePositions(): void {
         if (this.lastPositionUpdate) {
             const msSinceLastUpdate = Date.now() - this.lastPositionUpdate
@@ -774,10 +808,7 @@ export class Character extends Observer implements CharacterData {
             })
         }
 
-        this.socket.on("skill_timeout", (data: SkillTimeoutData) => {
-            const next = new Date(Date.now() + Math.ceil(data.ms))
-            this.setNextSkill(data.name, next)
-        })
+        this.registerCooldownListeners()
 
         this.socket.on("upgrade", (data: UpgradeData) => {
             if (data.type == "compound" && this.q.compound) delete this.q.compound
@@ -1098,7 +1129,7 @@ export class Character extends Observer implements CharacterData {
         if (!this.ready) throw new Error("We aren't ready yet [basicAttack].")
 
         const response = this.getResponsePromise("attack") as Promise<ProjectileSkillGRDataObject>
-        this.socket.emit("attack", { id: id })
+        this.emitSkill({ id: id, name: "attack" })
         return response
     }
 
@@ -2839,7 +2870,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("disappearing_text", cantEquipCheck)
         })
 
-        this.socket.emit("equip", { num: inventoryPos, slot: equipSlot })
+        this.emitEquip({ num: inventoryPos, slot: equipSlot })
         return equipFinished
     }
 
@@ -4025,6 +4056,163 @@ export class Character extends Observer implements CharacterData {
     }
 
     /**
+     * Mines the nearest eligible rock, or a specific rock when an ID is supplied.
+     */
+    public async mine(rockId?: string): Promise<MiningResult> {
+        if (!this.ready) throw new Error("We aren't ready yet [mine].")
+        if (rockId !== undefined && (typeof rockId !== "string" || rockId.trim().length === 0)) {
+            throw new Error("mine requires a non-empty rock ID when one is provided.")
+        }
+        if (this.miningRequestActive || this.c.mining) throw new Error("We're already mining [mine].")
+
+        this.miningRequestActive = true
+        return new Promise<MiningResult>((resolve, reject) => {
+            let phase: "start" | "terminal" = "start"
+            let settled = false
+            let timeout: ReturnType<typeof setTimeout> | undefined
+            let activeRockId = rockId
+            const requestedRock = rockId === undefined ? "nearest eligible rock" : `rock '${rockId}'`
+
+            const cleanup = () => {
+                this.socket.off("game_response", responseCheck)
+                this.socket.off("disconnect", disconnectCheck)
+                this.socket.off("disconnect_reason", disconnectCheck)
+                if (timeout !== undefined) clearTimeout(timeout)
+                this.miningRequestActive = false
+            }
+
+            const finish = (outcome: { error: Error } | { result: MiningResult }) => {
+                if (settled) return
+                settled = true
+                cleanup()
+                if ("error" in outcome) reject(outcome.error)
+                else resolve(outcome.result)
+            }
+
+            const malformed = (stage: "start" | "terminal") => {
+                finish({ error: new Error(`mine received a malformed ${stage} response for ${requestedRock}.`) })
+            }
+
+            const armTimeout = () => {
+                if (timeout !== undefined) clearTimeout(timeout)
+                timeout = setTimeout(() => {
+                    finish({
+                        error: new Error(
+                            `mine ${phase} timeout (${Constants.CONNECT_TIMEOUT_MS}ms) for ${requestedRock}.`,
+                        ),
+                    })
+                }, Constants.CONNECT_TIMEOUT_MS)
+            }
+
+            const responseCheck = (data: GameResponseData) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) return
+                const response = data as Record<string, unknown>
+                if (response.place !== "mining") return
+                if (
+                    activeRockId !== undefined &&
+                    typeof response.rock_id === "string" &&
+                    response.rock_id !== activeRockId
+                ) {
+                    return
+                }
+
+                if (phase === "start") {
+                    if (response.failed === true) {
+                        const failure =
+                            typeof response.reason === "string" && response.reason.length > 0
+                                ? response.reason
+                                : typeof response.response === "string" && response.response.length > 0
+                                  ? response.response
+                                  : "unknown"
+                        finish({ error: new Error(`mine start failed for ${requestedRock} (${failure}).`) })
+                        return
+                    }
+                    if (response.cevent === true) {
+                        finish({
+                            error: new Error(
+                                `mine received a terminal response before the start response for ${requestedRock}.`,
+                            ),
+                        })
+                        return
+                    }
+                    if (response.response !== "data" || response.in_progress !== true) return
+                    if (
+                        typeof response.rock_id !== "string" ||
+                        response.rock_id.length === 0 ||
+                        typeof response.duration !== "number" ||
+                        !Number.isFinite(response.duration) ||
+                        response.duration <= 0
+                    ) {
+                        malformed("start")
+                        return
+                    }
+                    activeRockId = response.rock_id
+                    phase = "terminal"
+                    armTimeout()
+                    return
+                }
+
+                const terminal = response as Partial<MiningTerminalGRDataObject>
+                if (terminal.cevent !== true) return
+
+                if (
+                    terminal.response !== "data" ||
+                    typeof terminal.rock_id !== "string" ||
+                    terminal.rock_id.length === 0 ||
+                    (terminal.outcome !== "success" &&
+                        terminal.outcome !== "failure" &&
+                        terminal.outcome !== "cancelled")
+                ) {
+                    malformed("terminal")
+                    return
+                }
+                if (
+                    (terminal.ore !== undefined && (typeof terminal.ore !== "string" || terminal.ore.length === 0)) ||
+                    (terminal.bonus !== undefined &&
+                        (typeof terminal.bonus !== "string" || terminal.bonus.length === 0)) ||
+                    (terminal.reason !== undefined &&
+                        (typeof terminal.reason !== "string" || terminal.reason.length === 0)) ||
+                    (terminal.xp !== undefined && (!Number.isSafeInteger(terminal.xp) || terminal.xp < 0)) ||
+                    (terminal.available_at !== undefined &&
+                        (!Number.isSafeInteger(terminal.available_at) || terminal.available_at < 0))
+                ) {
+                    malformed("terminal")
+                    return
+                }
+
+                finish({
+                    result: {
+                        outcome: terminal.outcome,
+                        rockId: terminal.rock_id,
+                        ...(terminal.ore === undefined ? {} : { ore: terminal.ore }),
+                        ...(terminal.xp === undefined ? {} : { xp: terminal.xp }),
+                        ...(terminal.bonus === undefined ? {} : { bonus: terminal.bonus }),
+                        ...(terminal.available_at === undefined ? {} : { availableAt: terminal.available_at }),
+                        ...(terminal.reason === undefined ? {} : { reason: terminal.reason }),
+                    },
+                })
+            }
+
+            const disconnectCheck = () => {
+                finish({
+                    error: new Error(`mine disconnected before receiving a ${phase} response for ${requestedRock}.`),
+                })
+            }
+
+            try {
+                armTimeout()
+                this.socket.on("game_response", responseCheck)
+                this.socket.on("disconnect", disconnectCheck)
+                this.socket.on("disconnect_reason", disconnectCheck)
+                this.emitSkill(rockId === undefined ? { name: "mining" } : { name: "mining", id: rockId })
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : "unknown socket error"
+                finish({ error: new Error(`mine start emit failed for ${requestedRock} (${reason}).`) })
+            }
+        })
+    }
+
+    /**
 
      *
      * @param {number} x
@@ -4403,7 +4591,7 @@ export class Character extends Observer implements CharacterData {
 
         try {
             const response = this.getResponsePromise("scare")
-            this.socket.emit("skill", { name: "scare" })
+            this.emitSkill({ name: "scare" })
             await response
         } finally {
             this.socket.off("ui", getIDs)
@@ -5412,7 +5600,7 @@ export class Character extends Observer implements CharacterData {
 
         try {
             const response = this.getResponsePromise("temporalsurge")
-            this.socket.emit("skill", { name: "temporalsurge" })
+            this.emitSkill({ name: "temporalsurge" })
             await response
         } finally {
             this.socket.off("game_response", getRespawnTimes)
@@ -5453,7 +5641,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("eval", cooldownCheck)
         })
 
-        this.socket.emit("skill", { id: target, name: "snowball", num: snowball })
+        this.emitSkill({ id: target, name: "snowball", num: snowball })
         return throwStarted
     }
 
@@ -5781,7 +5969,7 @@ export class Character extends Observer implements CharacterData {
             this.socket.on("game_response", failCheck)
         })
 
-        this.socket.emit("equip", { consume: true, num: itemPos })
+        this.emitEquip({ consume: true, num: itemPos })
         return usedPotion
     }
 
@@ -5931,7 +6119,7 @@ export class Character extends Observer implements CharacterData {
         if (!this.ready) throw new Error("We aren't ready yet [zapperZap].")
 
         const response = this.getResponsePromise("zapperzap")
-        this.socket.emit("skill", { id: id, name: "zapperzap" })
+        this.emitSkill({ id: id, name: "zapperzap" })
         return response
     }
 

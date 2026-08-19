@@ -31,7 +31,7 @@ export class Ranger extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("5shot")
-            this.socket.emit("skill", {
+            this.emitSkill({
                 ids: [target1, target2, target3, target4, target5],
                 name: "5shot",
             })
@@ -49,7 +49,7 @@ export class Ranger extends PingCompensatedCharacter {
         // TODO: Check that the target is not a monster.
 
         const response = this.getResponsePromise("4fingers")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "4fingers",
         })
@@ -60,7 +60,7 @@ export class Ranger extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [huntersMark].")
 
         const response = this.getResponsePromise("huntersmark")
-        this.socket.emit("skill", {
+        this.emitSkill({
             id: target,
             name: "huntersmark",
         })
@@ -81,7 +81,7 @@ export class Ranger extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("piercingshot")
-            this.socket.emit("skill", { id: target, name: "piercingshot" })
+            this.emitSkill({ id: target, name: "piercingshot" })
             await response
         } finally {
             this.socket.off("action", getProjectile)
@@ -106,7 +106,7 @@ export class Ranger extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("poisonarrow")
-            this.socket.emit("skill", { id: target, name: "poisonarrow", num: poison })
+            this.emitSkill({ id: target, name: "poisonarrow", num: poison })
             await response
         } finally {
             this.socket.off("action", getProjectile)
@@ -134,7 +134,7 @@ export class Ranger extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("supershot")
-            this.socket.emit("skill", { id: target, name: "supershot" })
+            this.emitSkill({ id: target, name: "supershot" })
             await response
         } finally {
             this.socket.off("action", getProjectile)
@@ -160,7 +160,7 @@ export class Ranger extends PingCompensatedCharacter {
 
         try {
             const response = this.getResponsePromise("3shot")
-            this.socket.emit("skill", {
+            this.emitSkill({
                 ids: [target1, target2, target3],
                 name: "3shot",
             })

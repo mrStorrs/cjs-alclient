@@ -9,7 +9,7 @@ export class Paladin extends PingCompensatedCharacter {
         if (!this.s.mshield) return // It's already off
 
         const response = this.getResponsePromise("mshield")
-        this.socket.emit("skill", { name: "mshield" })
+        this.emitSkill({ name: "mshield" })
         return response
     }
 
@@ -19,7 +19,7 @@ export class Paladin extends PingCompensatedCharacter {
         if (this.s.mshield) return // It's already on
 
         const response = this.getResponsePromise("mshield")
-        this.socket.emit("skill", { name: "mshield" })
+        this.emitSkill({ name: "mshield" })
         return response
     }
 
@@ -28,7 +28,7 @@ export class Paladin extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [purify].")
 
         const response = this.getResponsePromise("purify")
-        this.socket.emit("skill", { id: target, name: "purify" })
+        this.emitSkill({ id: target, name: "purify" })
         return response
     }
 
@@ -37,7 +37,7 @@ export class Paladin extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [selfHeal].")
 
         const response = this.getResponsePromise("selfheal")
-        this.socket.emit("skill", { name: "selfheal" })
+        this.emitSkill({ name: "selfheal" })
         return response
     }
 
@@ -46,7 +46,7 @@ export class Paladin extends PingCompensatedCharacter {
         if (!this.ready) throw new Error("We aren't ready yet [smash].")
 
         const response = this.getResponsePromise("smash")
-        this.socket.emit("skill", { id: target, name: "smash" })
+        this.emitSkill({ id: target, name: "smash" })
         return response
     }
 }

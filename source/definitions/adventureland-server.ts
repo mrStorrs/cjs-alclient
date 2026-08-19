@@ -75,9 +75,60 @@ export type AuthData = {
 
 export type ChannelInfo = {
     fishing?: { ms: number; drop: "f1" }
-    mining?: { ms: number; drop: "m1" | "m2" }
+    mining?: { ms: number; len: number; rock_id: string }
     pickpocket?: { ms: number; target: string }
     town?: { ms: number }
+}
+
+export type MiningOutcome = "success" | "failure" | "cancelled"
+
+export interface MiningResult {
+    outcome: MiningOutcome
+    rockId: string
+    ore?: string
+    xp?: number
+    bonus?: string
+    availableAt?: number
+    reason?: string
+}
+
+export interface MiningStateData {
+    rocks: Record<string, number>
+}
+
+export type MiningStartGRDataObject =
+    | {
+          response: "data"
+          place: "mining"
+          success: false
+          in_progress: true
+          rock_id: string
+          duration: number
+      }
+    | {
+          response: "data"
+          place: "mining"
+          failed: true
+          reason: string
+      }
+    | {
+          response: "in_progress"
+          place: "mining"
+          failed: true
+      }
+
+export interface MiningTerminalGRDataObject {
+    response: "data"
+    place: "mining"
+    cevent: true
+    outcome: MiningOutcome
+    rock_id: string
+    ore?: string
+    xp?: number
+    bonus?: string
+    bonus_omitted?: true
+    available_at?: number
+    reason?: string
 }
 
 export type CharacterData = PlayerData & {
@@ -514,7 +565,7 @@ export type DestroyGRDataObject = {
 }
 export type SkillSuccessGRDataObject = {
     response: "data"
-    place: Exclude<SkillName, "attack" | "taunt" | "heal" | "curse" | "supershot">
+    place: Exclude<SkillName, "attack" | "taunt" | "heal" | "curse" | "supershot" | "mining">
     success: boolean
     in_progress?: true
 }
@@ -643,6 +694,8 @@ export type GameResponseDataObject =
     | UpgradeCompoundGRDataObject
     | BankOperationGRDataObject
     | SetHomeGRDataObject
+    | MiningStartGRDataObject
+    | MiningTerminalGRDataObject
 
 export type GameResponseDataString =
     | "bank_restrictions"
@@ -1186,7 +1239,8 @@ export type ServerMessageData =
     | { color: string; discord: string; message: string }
     | { color: string; event: boolean; message: string }
 
-export type SkillTimeoutData = { name: SkillName; ms: number; penalty: number }
+export type SkillTimeoutData = { name: SkillName; ms: number; penalty?: number }
+export type AbilityTimeoutData = Pick<SkillTimeoutData, "name" | "ms">
 
 export type StartData = CharacterData & {
     info?: MapInfo
@@ -1197,6 +1251,7 @@ export type StartData = CharacterData & {
     base_gold: { [T in MonsterName]?: { [T in string]?: number } }
     s_info: ServerInfoData
     entities: EntitiesData
+    mining_state?: MiningStateData
 }
 
 export type TavernEventData = {
@@ -1256,6 +1311,7 @@ export type UIDataFishingMining = {
     type: "fishing_fail" | "fishing_none" | "fishing_start" | "mining_fail" | "mining_none" | "mining_start"
     name?: string
     direction?: number
+    rock_id?: string
 }
 export type UIDataMassProduction = { type: "massproduction"; name: string }
 export type UIDataMLuck = { type: "mluck"; from: string; to: string }
@@ -1297,6 +1353,7 @@ export type WelcomeData = {
 export type ServerToClientEvents = {
     achievement_progress: (data: AchievementProgressData) => void
     action: (data: ActionData) => void
+    ability_timeout: (data: AbilityTimeoutData) => void
     chat_log: (data: ChatLogData) => void
     chest_opened: (data: ChestOpenedData) => void
     cm: (data: CMData) => void
@@ -1322,6 +1379,7 @@ export type ServerToClientEvents = {
     limitdcreport: (data: LimitDCReportData) => void
     lostandfound: (data: ItemDataTrade[]) => void
     magiport: (data: { name: string }) => void
+    mining_state: (data: MiningStateData) => void
     new_map: (data: NewMapData) => void
     // TODO: Is this real? How does this happen?
     notthere: (data: NotThereData) => void
@@ -1363,7 +1421,6 @@ export type ClientToServerSkillData =
               | "massexchange"
               | "massexchangepp"
               | "mcourage"
-              | "mining"
               | "mshield"
               | "partyheal"
               | "scare"
@@ -1373,6 +1430,8 @@ export type ClientToServerSkillData =
               | "warcry"
           >
       }
+    /** Mining optionally targets a specific rock. */
+    | { name: Extract<SkillName, "mining">; id?: string }
     /** Skills that target an entity */
     | {
           name: Extract<
@@ -1410,7 +1469,15 @@ export type ClientToServerSkillData =
     | { name: Extract<SkillName, "cburst">; targets: [string, number][] }
     | { name: Extract<SkillName, "energize">; id: string; mp: number }
 
+export type ClientToServerAbilityData = ClientToServerSkillData | { name: "attack"; id: string }
+
+export type ClientToServerEquipData =
+    | { num: number; slot: SlotType }
+    | { consume: true; num: number }
+    | { num: number; price: number; q: number; slot: TradeSlotType }
+
 export type ClientToServerEvents = {
+    ability: (data: ClientToServerAbilityData) => void
     attack: (data: { id: string }) => void
     auth: (data: AuthData) => void
     // TODO: Create BankData type
@@ -1444,12 +1511,7 @@ export type ClientToServerEvents = {
     donate: (donation: { gold: number }) => void
     emotion: (data: { name: EmotionName }) => void
     enter: (data: { name: string; place: MapName }) => void
-    equip: (
-        data:
-            | { num: number; slot: SlotType }
-            | { consume: true; num: number }
-            | { num: number; price: number; q: number; slot: TradeSlotType },
-    ) => void
+    equip: (data: ClientToServerEquipData & { item?: ItemData }) => void
     equip_batch: (data: { num: number; slot: SlotType }[]) => void
     eval: (data: { command: string }) => void
     exchange: (data: { item_num: number; q?: number }) => void

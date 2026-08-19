@@ -26,6 +26,23 @@ import { Rogue } from "./Rogue.js"
 import { Warrior } from "./Warrior.js"
 import { Tools } from "./Tools.js"
 
+type Protocol4GameData = {
+    protocol?: unknown
+    abilities?: Record<string, Record<string, unknown>>
+    classes?: Record<string, { readonly damage_type: "physical" | "magical" }>
+    skills?: Record<string, Record<string, unknown>>
+}
+
+const protocol4Classes = {
+    warrior: { damage_type: "physical" as const },
+    paladin: { damage_type: "physical" as const },
+    mage: { damage_type: "magical" as const },
+    priest: { damage_type: "magical" as const },
+    ranger: { damage_type: "physical" as const },
+    rogue: { damage_type: "physical" as const },
+    merchant: { damage_type: "physical" as const },
+}
+
 export class Game {
     public static user: { userID: string; userAuth: string; secure: boolean }
 
@@ -51,6 +68,17 @@ export class Game {
 
     protected constructor() {
         // Private to force static methods
+    }
+
+    protected static prepareProtocol4GameData(gameData: GData): GData {
+        const game = gameData as unknown as Protocol4GameData
+        if (game.protocol !== 4) return gameData
+
+        game.classes ??= {}
+        for (const [name, characterClass] of Object.entries(protocol4Classes)) game.classes[name] ??= characterClass
+        game.skills ??= {}
+        for (const [name, ability] of Object.entries(game.abilities ?? {})) game.skills[name] ??= ability
+        return gameData
     }
 
     static setServer(server: string) {
@@ -84,7 +112,7 @@ export class Game {
     }
 
     static async getGData(cache = false, optimize = false): Promise<GData> {
-        if (this.G) return this.G
+        if (this.G) return this.prepareProtocol4GameData(this.G)
         if (!this.version) await this.getVersion()
         const gFile = `G_${this.version}.json`
         try {
@@ -92,7 +120,7 @@ export class Game {
 
             // Check if there's cached data
             this.G = JSON.parse(fs.readFileSync(gFile, "utf8")) as GData
-            return this.G
+            return this.prepareProtocol4GameData(this.G)
         } catch {
             // There's no cached data, download it
             console.debug("Updating 'G' data...")
@@ -108,7 +136,7 @@ export class Game {
                 console.debug("Updated 'G' data!")
 
                 if (cache) fs.writeFileSync(gFile, JSON.stringify(this.G))
-                return this.G
+                return this.prepareProtocol4GameData(this.G)
             } else {
                 console.error(response)
                 console.error(`Error fetching ${this.url}/data.js`)
