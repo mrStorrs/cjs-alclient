@@ -147,3 +147,22 @@ timeouts reject the promise. Each invocation owns and removes its listeners
 after every terminal path. Account-scoped rock timestamps are also exposed by
 the `mining_state` socket event as a `{ rocks: Record<string, number> }`
 payload.
+
+### Smithing API
+
+Every `Character` subclass, including `Merchant`, also inherits the server-timed
+Smithing method:
+
+```typescript
+const bar = await ranger.smith("copperbar")
+const weapon = await ranger.smith("copperblade")
+```
+
+`smith(output)` accepts a Smithing output such as `copperbar` or `copperblade`.
+It sends the craft request, waits for the matching Smithing start response, and
+resolves only after the server sends the terminal response. The returned typed
+`SmithingResult` includes an `outcome` of `success`, `failure`, or `cancelled`,
+the `output`, optional `xp`, and an optional cancellation `reason`.
+
+Invalid recipes, rejected starts, malformed lifecycle responses, disconnects,
+timeouts, and overlapping Smithing requests reject the promise.

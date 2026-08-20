@@ -2505,19 +2505,23 @@ export class Character extends Observer implements CharacterData {
             const responseCheck = (data: GameResponseData) => {
                 if (!data || typeof data !== "object" || Array.isArray(data)) return
                 const response = data as Record<string, unknown>
+                if (
+                    phase === "start" &&
+                    response.failed === true &&
+                    (response.place === "smithing" || response.place === "craft")
+                ) {
+                    const reason =
+                        typeof response.reason === "string" && response.reason.length > 0
+                            ? response.reason
+                            : typeof response.response === "string" && response.response.length > 0
+                              ? response.response
+                              : "unknown"
+                    finish({ error: new Error(`smith start failed for ${output} (${reason}).`) })
+                    return
+                }
                 if (response.place !== "smithing") return
 
                 if (phase === "start") {
-                    if (response.failed === true) {
-                        const reason =
-                            typeof response.reason === "string" && response.reason.length > 0
-                                ? response.reason
-                                : typeof response.response === "string" && response.response.length > 0
-                                  ? response.response
-                                  : "unknown"
-                        finish({ error: new Error(`smith start failed for ${output} (${reason}).`) })
-                        return
-                    }
                     if (response.cevent === true) {
                         finish({
                             error: new Error(

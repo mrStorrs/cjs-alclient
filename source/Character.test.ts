@@ -1777,6 +1777,19 @@ test("Character.smith rejects invalid lifecycle responses and overlapping work w
     await expect(smithing).rejects.toThrow("malformed start")
     expectNoSmithingListeners(socket)
 
+    const terminalFirstCharacter = newSmithingCharacter()
+    const terminalFirstSocket = prepareMiningSocket(terminalFirstCharacter)
+    const terminalFirst = terminalFirstCharacter.smith("copperbar")
+    terminalFirstSocket.dispatch("game_response", {
+        response: "data",
+        place: "smithing",
+        cevent: true,
+        outcome: "success",
+        output: "copperbar",
+    })
+    await expect(terminalFirst).rejects.toThrow("terminal response before the start")
+    expectNoSmithingListeners(terminalFirstSocket)
+
     const busyCharacter = newSmithingCharacter()
     const busySocket = prepareMiningSocket(busyCharacter)
     busyCharacter.c.smithing = {} as never
@@ -1791,7 +1804,7 @@ test("Character.smith rejects failed starts, malformed terminals, disconnects, e
         const failedCharacter = newSmithingCharacter()
         const failedSocket = prepareMiningSocket(failedCharacter)
         const failed = failedCharacter.smith("copperbar")
-        failedSocket.dispatch("game_response", { response: "smithing_level", place: "smithing", failed: true })
+        failedSocket.dispatch("game_response", { response: "smithing_level", place: "craft", failed: true })
         await expect(failed).rejects.toThrow("smithing_level")
         expectNoSmithingListeners(failedSocket)
 
@@ -1809,6 +1822,20 @@ test("Character.smith rejects failed starts, malformed terminals, disconnects, e
         })
         await expect(malformed).rejects.toThrow("malformed terminal")
         expectNoSmithingListeners(malformedSocket)
+
+        const mismatchedCharacter = newSmithingCharacter()
+        const mismatchedSocket = prepareMiningSocket(mismatchedCharacter)
+        const mismatched = mismatchedCharacter.smith("copperbar")
+        await acceptSmithingStart(mismatchedSocket, "copperbar")
+        mismatchedSocket.dispatch("game_response", {
+            response: "data",
+            place: "smithing",
+            cevent: true,
+            outcome: "success",
+            output: "ironbar",
+        })
+        await expect(mismatched).rejects.toThrow("malformed terminal")
+        expectNoSmithingListeners(mismatchedSocket)
 
         const disconnectedCharacter = newSmithingCharacter()
         const disconnectedSocket = prepareMiningSocket(disconnectedCharacter)
