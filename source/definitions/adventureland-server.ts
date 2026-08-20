@@ -76,6 +76,19 @@ export type AuthData = {
 export type ChannelInfo = {
     fishing?: { ms: number; drop: "f1" }
     mining?: { ms: number; len: number; rock_id: string }
+    smithing?: {
+        ms: number
+        len: number
+        action_id: string
+        source_id: string
+        kind: "refine" | "forge"
+        tier_id: string
+        output: string
+        inputs: { slot: number; name: string; quantity: number }[]
+        property: false | string
+        started_at: number
+        completes_at: number
+    }
     pickpocket?: { ms: number; target: string }
     town?: { ms: number }
 }
@@ -128,6 +141,41 @@ export interface MiningTerminalGRDataObject {
     bonus?: string
     bonus_omitted?: true
     available_at?: number
+    reason?: string
+}
+
+export type SmithingOutcome = "success" | "failure" | "cancelled"
+
+export interface SmithingResult {
+    outcome: SmithingOutcome
+    output: string
+    xp?: number
+    reason?: string
+}
+
+export type SmithingStartGRDataObject =
+    | {
+          response: "data"
+          place: "smithing"
+          success: false
+          in_progress: true
+          duration: number
+          output: string
+      }
+    | {
+          response: "smithing_level" | "inventory_full" | "smithing_busy" | "craft_cant"
+          place: "smithing"
+          failed: true
+          reason?: string
+      }
+
+export interface SmithingTerminalGRDataObject {
+    response: "data"
+    place: "smithing"
+    cevent: true
+    outcome: SmithingOutcome
+    output: string
+    xp?: number
     reason?: string
 }
 
@@ -696,6 +744,8 @@ export type GameResponseDataObject =
     | SetHomeGRDataObject
     | MiningStartGRDataObject
     | MiningTerminalGRDataObject
+    | SmithingStartGRDataObject
+    | SmithingTerminalGRDataObject
 
 export type GameResponseDataString =
     | "bank_restrictions"

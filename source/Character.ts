@@ -23,6 +23,7 @@ import type {
     GData,
     GMap,
     ItemName,
+    SmithingItemName,
     MapName,
     MonsterName,
     NPCName,
@@ -75,6 +76,8 @@ import type {
     DestroyGRDataObject,
     MiningResult,
     MiningTerminalGRDataObject,
+    SmithingResult,
+    SmithingTerminalGRDataObject,
 } from "./definitions/adventureland-server.js"
 import type { LinkData } from "./definitions/pathfinder.js"
 import { Constants } from "./Constants.js"
@@ -106,6 +109,7 @@ export class Character extends Observer implements CharacterData {
     public characterID: string
     public timeouts = new Map<string, ReturnType<typeof setTimeout>>()
     private miningRequestActive = false
+    private smithingRequestActive = false
 
     public achievements = new Map<string, AchievementProgressData>()
     public get bank(): BankInfo {
@@ -2429,28 +2433,7 @@ export class Character extends Observer implements CharacterData {
         const gInfo = this.G.craft[item]
         if (!gInfo) throw new Error(`Can not find a recipe for ${item}.`)
         if (gInfo.cost > this.gold) throw new Error(`We don't have enough gold to craft ${item}.`)
-
-        const itemPositions: [number, number][] = []
-        for (let i = 0; i < gInfo.items.length; i++) {
-            const requiredQuantity = gInfo.items[i][0]
-            const requiredName = gInfo.items[i][1]
-            // If the item is compoundable or upgradable, the level needs to be 0
-            let fixedItemLevel = gInfo.items[i][2]
-            if (fixedItemLevel === undefined) {
-                const gInfo = this.G.items[requiredName]
-                if (gInfo.upgrade || gInfo.compound) fixedItemLevel = 0
-            }
-
-            const itemPos = this.locateItem(requiredName, this.items, {
-                level: fixedItemLevel,
-                quantityGreaterThan: requiredQuantity > 1 ? requiredQuantity - 1 : undefined,
-                returnLowestQuantity: fixedItemLevel === undefined ? true : undefined,
-            })
-            if (itemPos == undefined)
-                throw new Error(`We don't have ${requiredQuantity} ${requiredName} to craft ${item}.`)
-
-            itemPositions.push([i, itemPos])
-        }
+        const itemPositions = this.craftItemPositions(item)
 
         const crafted = new Promise<void>((resolve, reject) => {
             const successCheck = async (data: GameResponseData) => {
@@ -2471,6 +2454,157 @@ export class Character extends Observer implements CharacterData {
 
         this.socket.emit("craft", { items: itemPositions })
         return crafted
+    }
+
+    /**
+     * Starts a server-timed Smithing recipe and resolves after its terminal result.
+     */
+    public async smith(output: ItemName | SmithingItemName): Promise<SmithingResult> {
+        if (!this.ready) throw new Error("We aren't ready yet [smith].")
+        const recipe = this.G.craft[output as ItemName]
+        if (!recipe) throw new Error(`Can not find a recipe for ${output}.`)
+        if (recipe.cost > this.gold) throw new Error(`We don't have enough gold to smith ${output}.`)
+        if (this.smithingRequestActive || this.c.smithing) throw new Error("We're already smithing [smith].")
+
+        const itemPositions = this.craftItemPositions(output)
+        this.smithingRequestActive = true
+        return new Promise<SmithingResult>((resolve, reject) => {
+            let phase: "start" | "terminal" = "start"
+            let settled = false
+            let timeout: ReturnType<typeof setTimeout> | undefined
+
+            const cleanup = () => {
+                this.socket.off("game_response", responseCheck)
+                this.socket.off("disconnect", disconnectCheck)
+                this.socket.off("disconnect_reason", disconnectCheck)
+                if (timeout !== undefined) clearTimeout(timeout)
+                this.smithingRequestActive = false
+            }
+
+            const finish = (settlement: { error: Error } | { result: SmithingResult }) => {
+                if (settled) return
+                settled = true
+                cleanup()
+                if ("error" in settlement) reject(settlement.error)
+                else resolve(settlement.result)
+            }
+
+            const malformed = (stage: "start" | "terminal") => {
+                finish({ error: new Error(`smith received a malformed ${stage} response for ${output}.`) })
+            }
+
+            const armTimeout = () => {
+                if (timeout !== undefined) clearTimeout(timeout)
+                timeout = setTimeout(() => {
+                    finish({
+                        error: new Error(`smith ${phase} timeout (${Constants.CONNECT_TIMEOUT_MS}ms) for ${output}.`),
+                    })
+                }, Constants.CONNECT_TIMEOUT_MS)
+            }
+
+            const responseCheck = (data: GameResponseData) => {
+                if (!data || typeof data !== "object" || Array.isArray(data)) return
+                const response = data as Record<string, unknown>
+                if (response.place !== "smithing") return
+
+                if (phase === "start") {
+                    if (response.failed === true) {
+                        const reason =
+                            typeof response.reason === "string" && response.reason.length > 0
+                                ? response.reason
+                                : typeof response.response === "string" && response.response.length > 0
+                                  ? response.response
+                                  : "unknown"
+                        finish({ error: new Error(`smith start failed for ${output} (${reason}).`) })
+                        return
+                    }
+                    if (response.cevent === true) {
+                        finish({
+                            error: new Error(
+                                `smith received a terminal response before the start response for ${output}.`,
+                            ),
+                        })
+                        return
+                    }
+                    if (response.response !== "data" || response.in_progress !== true) return
+                    if (
+                        response.output !== output ||
+                        typeof response.duration !== "number" ||
+                        !Number.isFinite(response.duration) ||
+                        response.duration <= 0
+                    ) {
+                        malformed("start")
+                        return
+                    }
+                    phase = "terminal"
+                    armTimeout()
+                    return
+                }
+
+                const terminal = response as Partial<SmithingTerminalGRDataObject>
+                if (terminal.cevent !== true) return
+                if (
+                    terminal.response !== "data" ||
+                    terminal.output !== output ||
+                    (terminal.outcome !== "success" &&
+                        terminal.outcome !== "failure" &&
+                        terminal.outcome !== "cancelled") ||
+                    (terminal.xp !== undefined && (!Number.isSafeInteger(terminal.xp) || terminal.xp < 0)) ||
+                    (terminal.reason !== undefined &&
+                        (typeof terminal.reason !== "string" || terminal.reason.length === 0))
+                ) {
+                    malformed("terminal")
+                    return
+                }
+                finish({
+                    result: {
+                        outcome: terminal.outcome,
+                        output,
+                        ...(terminal.xp === undefined ? {} : { xp: terminal.xp }),
+                        ...(terminal.reason === undefined ? {} : { reason: terminal.reason }),
+                    },
+                })
+            }
+
+            const disconnectCheck = () => {
+                finish({ error: new Error(`smith disconnected before receiving a ${phase} response for ${output}.`) })
+            }
+
+            try {
+                armTimeout()
+                this.socket.on("game_response", responseCheck)
+                this.socket.on("disconnect", disconnectCheck)
+                this.socket.on("disconnect_reason", disconnectCheck)
+                this.socket.emit("craft", { items: itemPositions })
+            } catch (error) {
+                const reason = error instanceof Error ? error.message : "unknown socket error"
+                finish({ error: new Error(`smith start emit failed for ${output} (${reason}).`) })
+            }
+        })
+    }
+
+    private craftItemPositions(item: ItemName | SmithingItemName): [number, number][] {
+        const recipe = this.G.craft[item as ItemName]
+        if (!recipe) throw new Error(`Can not find a recipe for ${item}.`)
+        const itemPositions: [number, number][] = []
+        for (let index = 0; index < recipe.items.length; index++) {
+            const requiredQuantity = recipe.items[index][0]
+            const requiredName = recipe.items[index][1]
+            let fixedItemLevel = recipe.items[index][2]
+            if (fixedItemLevel === undefined) {
+                const required = this.G.items[requiredName]
+                if (required.upgrade || required.compound) fixedItemLevel = 0
+            }
+            const itemPosition = this.locateItem(requiredName, this.items, {
+                level: fixedItemLevel,
+                quantityGreaterThan: requiredQuantity > 1 ? requiredQuantity - 1 : undefined,
+                returnLowestQuantity: fixedItemLevel === undefined ? true : undefined,
+            })
+            if (itemPosition === undefined)
+                throw new Error(`We don't have ${requiredQuantity} ${requiredName} to craft ${item}.`)
+            itemPositions.push([index, itemPosition])
+        }
+        return itemPositions
     }
 
     // TODO: Add promises

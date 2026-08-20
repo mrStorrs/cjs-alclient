@@ -5,6 +5,9 @@ import type {
     MiningStartGRDataObject,
     MiningStateData,
     MiningTerminalGRDataObject,
+    SmithingResult,
+    SmithingStartGRDataObject,
+    SmithingTerminalGRDataObject,
     ServerToClientEvents,
     StartData,
     UIData,
@@ -49,6 +52,42 @@ test("UIData type validation", async () => {
         snum: 6,
     }
     expect(trade_sell).toBeDefined()
+})
+
+test("Smithing socket and public result type validation", () => {
+    const channel: NonNullable<ChannelInfo["smithing"]> = {
+        ms: 15_000,
+        len: 30_000,
+        action_id: "smithing-action",
+        source_id: "server:smithing:character:request",
+        kind: "refine",
+        tier_id: "copper",
+        output: "copperbar",
+        inputs: [{ slot: 3, name: "copperore", quantity: 2 }],
+        property: false,
+        started_at: 1_787_123_456_789,
+        completes_at: 1_787_123_486_789,
+    }
+    const started: SmithingStartGRDataObject = {
+        response: "data",
+        place: "smithing",
+        success: false,
+        in_progress: true,
+        duration: 30_000,
+        output: "copperbar",
+    }
+    const terminal: SmithingTerminalGRDataObject = {
+        response: "data",
+        place: "smithing",
+        cevent: true,
+        outcome: "failure",
+        output: "copperbar",
+        xp: 4958,
+    }
+    const result: SmithingResult = { outcome: "failure", output: "copperbar", xp: 4958 }
+
+    expect(channel.output).toBe(started.output)
+    expect(terminal.output).toBe(result.output)
 })
 
 test("Mining socket and public result type validation", () => {
