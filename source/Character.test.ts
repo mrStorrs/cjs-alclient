@@ -1335,6 +1335,23 @@ function newProtocol4Character(): Character {
     return new Protocol4Character("", "", "", { ...Game.G, protocol: 4 }, serverData)
 }
 
+function newSmithingCharacter(): Character {
+    const character = newProtocol4Character()
+    character.G = {
+        ...character.G,
+        craft: {
+            ...character.G.craft,
+            copperbar: { items: [[2, "copperore"]], cost: 0 },
+        },
+        items: {
+            ...character.G.items,
+            copperore: { name: "Copper Ore" },
+        },
+    } as unknown as typeof character.G
+    character.items = [{ name: "copperore", q: 2 } as never]
+    return character
+}
+
 async function acceptMiningStart(
     socket: ReturnType<typeof prepareMiningSocket>,
     rockId: string,
@@ -1356,6 +1373,24 @@ function expectNoMiningListeners(socket: ReturnType<typeof prepareMiningSocket>)
     expect(socket.listenerCount("disappear")).toBe(0)
     expect(socket.listenerCount("disconnect")).toBe(0)
     expect(socket.listenerCount("disconnect_reason")).toBe(0)
+}
+
+function expectNoSmithingListeners(socket: ReturnType<typeof prepareMiningSocket>): void {
+    expect(socket.listenerCount("game_response")).toBe(0)
+    expect(socket.listenerCount("disconnect")).toBe(0)
+    expect(socket.listenerCount("disconnect_reason")).toBe(0)
+}
+
+async function acceptSmithingStart(socket: ReturnType<typeof prepareMiningSocket>, output: string): Promise<void> {
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "smithing",
+        success: false,
+        in_progress: true,
+        duration: 30_000,
+        output,
+    })
+    await Promise.resolve()
 }
 
 test("Character owns the one universal Mining method inherited by Merchant", () => {
@@ -1697,6 +1732,132 @@ test("Character.mine times out after the five-second attempt plus network tolera
         jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
         await expect(start).rejects.toThrow(`start timeout (${Constants.CONNECT_TIMEOUT_MS}ms)`)
         expectNoMiningListeners(startSocket)
+        expect(jest.getTimerCount()).toBe(0)
+    } finally {
+        jest.useRealTimers()
+    }
+})
+
+test("Character.smith emits the canonical craft request and resolves all terminal outcomes", async () => {
+    for (const terminal of [
+        { outcome: "success" as const, xp: 4958 },
+        { outcome: "failure" as const, xp: 4958 },
+        { outcome: "cancelled" as const, reason: "moved" },
+    ]) {
+        const character = newSmithingCharacter()
+        const socket = prepareMiningSocket(character)
+        const smithing = character.smith("copperbar")
+        expect(socket.emitted).toEqual([["craft", { items: [[0, 0]] }]])
+        await acceptSmithingStart(socket, "copperbar")
+        socket.dispatch("game_response", {
+            response: "data",
+            place: "smithing",
+            cevent: true,
+            output: "copperbar",
+            ...terminal,
+        })
+        await expect(smithing).resolves.toEqual({ output: "copperbar", ...terminal })
+        expectNoSmithingListeners(socket)
+    }
+})
+
+test("Character.smith rejects invalid lifecycle responses and overlapping work without leaks", async () => {
+    const character = newSmithingCharacter()
+    const socket = prepareMiningSocket(character)
+    const smithing = character.smith("copperbar")
+    await expect(character.smith("copperbar")).rejects.toThrow("already smithing")
+    socket.dispatch("game_response", {
+        response: "data",
+        place: "smithing",
+        success: false,
+        in_progress: true,
+        duration: 30_000,
+        output: "ironbar",
+    })
+    await expect(smithing).rejects.toThrow("malformed start")
+    expectNoSmithingListeners(socket)
+
+    const terminalFirstCharacter = newSmithingCharacter()
+    const terminalFirstSocket = prepareMiningSocket(terminalFirstCharacter)
+    const terminalFirst = terminalFirstCharacter.smith("copperbar")
+    terminalFirstSocket.dispatch("game_response", {
+        response: "data",
+        place: "smithing",
+        cevent: true,
+        outcome: "success",
+        output: "copperbar",
+    })
+    await expect(terminalFirst).rejects.toThrow("terminal response before the start")
+    expectNoSmithingListeners(terminalFirstSocket)
+
+    const busyCharacter = newSmithingCharacter()
+    const busySocket = prepareMiningSocket(busyCharacter)
+    busyCharacter.c.smithing = {} as never
+    await expect(busyCharacter.smith("copperbar")).rejects.toThrow("already smithing")
+    expect(busySocket.emitted).toEqual([])
+    expectNoSmithingListeners(busySocket)
+})
+
+test("Character.smith rejects failed starts, malformed terminals, disconnects, emits, and timeouts", async () => {
+    jest.useFakeTimers()
+    try {
+        const failedCharacter = newSmithingCharacter()
+        const failedSocket = prepareMiningSocket(failedCharacter)
+        const failed = failedCharacter.smith("copperbar")
+        failedSocket.dispatch("game_response", { response: "smithing_level", place: "craft", failed: true })
+        await expect(failed).rejects.toThrow("smithing_level")
+        expectNoSmithingListeners(failedSocket)
+
+        const malformedCharacter = newSmithingCharacter()
+        const malformedSocket = prepareMiningSocket(malformedCharacter)
+        const malformed = malformedCharacter.smith("copperbar")
+        await acceptSmithingStart(malformedSocket, "copperbar")
+        malformedSocket.dispatch("game_response", {
+            response: "data",
+            place: "smithing",
+            cevent: true,
+            outcome: "success",
+            output: "copperbar",
+            xp: Number.NaN,
+        })
+        await expect(malformed).rejects.toThrow("malformed terminal")
+        expectNoSmithingListeners(malformedSocket)
+
+        const mismatchedCharacter = newSmithingCharacter()
+        const mismatchedSocket = prepareMiningSocket(mismatchedCharacter)
+        const mismatched = mismatchedCharacter.smith("copperbar")
+        await acceptSmithingStart(mismatchedSocket, "copperbar")
+        mismatchedSocket.dispatch("game_response", {
+            response: "data",
+            place: "smithing",
+            cevent: true,
+            outcome: "success",
+            output: "ironbar",
+        })
+        await expect(mismatched).rejects.toThrow("malformed terminal")
+        expectNoSmithingListeners(mismatchedSocket)
+
+        const disconnectedCharacter = newSmithingCharacter()
+        const disconnectedSocket = prepareMiningSocket(disconnectedCharacter)
+        const disconnected = disconnectedCharacter.smith("copperbar")
+        await acceptSmithingStart(disconnectedSocket, "copperbar")
+        disconnectedSocket.dispatch("disconnect")
+        await expect(disconnected).rejects.toThrow("disconnected")
+        expectNoSmithingListeners(disconnectedSocket)
+
+        const timeoutCharacter = newSmithingCharacter()
+        const timeoutSocket = prepareMiningSocket(timeoutCharacter)
+        const timeout = timeoutCharacter.smith("copperbar")
+        jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
+        await expect(timeout).rejects.toThrow("start timeout")
+        expectNoSmithingListeners(timeoutSocket)
+        expect(jest.getTimerCount()).toBe(0)
+
+        const emitCharacter = newSmithingCharacter()
+        const emitSocket = prepareMiningSocket(emitCharacter)
+        emitSocket.failNextEmit(new Error("socket closed"))
+        await expect(emitCharacter.smith("copperbar")).rejects.toThrow("emit failed")
+        expectNoSmithingListeners(emitSocket)
         expect(jest.getTimerCount()).toBe(0)
     } finally {
         jest.useRealTimers()
