@@ -104,6 +104,8 @@ import type {
 import type { UpdateQuery } from "mongoose"
 import { TradeItem } from "./TradeItem.js"
 
+const isAttackInterruption = (error: unknown): boolean => error instanceof Error && error.message.toLowerCase().includes("attack")
+
 export class Character extends Observer implements CharacterData {
     public userAuth: string
     public characterID: string
@@ -5122,7 +5124,8 @@ export class Character extends Observer implements CharacterData {
         if (
             typeof to == "string" &&
             this.S[to as MonsterName | MapName] &&
-            this.G.events[to as MonsterName | MapName]?.join
+            this.G.events[to as MonsterName | MapName]?.join &&
+            !this.isBeingAttacked()
         ) {
             try {
                 await this.join(to as MonsterName | MapName)
@@ -5135,14 +5138,19 @@ export class Character extends Observer implements CharacterData {
         // If it's goobrawl, and we're not currently there, join goobrawl
         if (
             this.map !== "goobrawl" &&
-            (to == "goobrawl" || to == "rgoo" || to == "bgoo" || (typeof to == "object" && to.map == "goobrawl"))
+            (to == "goobrawl" || to == "rgoo" || to == "bgoo" || (typeof to == "object" && to.map == "goobrawl")) &&
+            !this.isBeingAttacked()
         ) {
             await this.join("goobrawl")
             return this.smartMove(to, options)
         }
 
         // If it's jail, and we're not currently there, warp to jail
-        if (this.map !== "jail" && (to == "jail" || to == "jrat" || (typeof to == "object" && to.map == "jail"))) {
+        if (
+            this.map !== "jail" &&
+            (to == "jail" || to == "jrat" || (typeof to == "object" && to.map == "jail")) &&
+            !this.isBeingAttacked()
+        ) {
             await this.warpToJail()
             return this.smartMove(to, options)
         }
@@ -5152,6 +5160,9 @@ export class Character extends Observer implements CharacterData {
         if (options.costs.blink == undefined) options.costs.blink = this.speed * 3.2 + 250 // We can't attack for 3.2 seconds after a blink, + it uses a lot of mana
         if (options.costs.town == undefined) options.costs.town = this.speed * (4 + this.timeout / 500) // Set it to 4s of movement, because it takes 3s to channel + it could be cancelled.
         if (options.costs.transport == undefined) options.costs.transport = this.speed * (this.timeout / 500) // Based on how long it takes to confirm with the server
+
+        let avoidTeleports = this.isBeingAttacked()
+        if (avoidTeleports) options.avoidTownWarps = true
 
         let fixedTo: IPosition & { map: MapName }
         let path: LinkData[]
@@ -5371,6 +5382,11 @@ export class Character extends Observer implements CharacterData {
                 throw new Error("We died while smartMoving")
             }
 
+            if (this.isBeingAttacked()) {
+                avoidTeleports = true
+                options.avoidTownWarps = true
+            }
+
             let currentMove = path[i]
 
             // Check if we can walk to a spot close to the goal if that's OK
@@ -5403,7 +5419,7 @@ export class Character extends Observer implements CharacterData {
             }
 
             // Blink check -- blink to the furthest node we can on the same map
-            if (options.useBlink && this.canUse("blink")) {
+            if (!avoidTeleports && options.useBlink && this.canUse("blink")) {
                 let blinked = false
                 for (let j = path.length - 1; j > i; j--) {
                     const potentialMove = path[j]
@@ -5438,6 +5454,11 @@ export class Character extends Observer implements CharacterData {
                     try {
                         await (this as unknown as Mage).blink(roundedMove.x, roundedMove.y)
                     } catch (e) {
+                        if (this.isBeingAttacked() || isAttackInterruption(e)) {
+                            avoidTeleports = true
+                            options.avoidTownWarps = true
+                            break
+                        }
                         if (!this.canUse("blink")) break // We can't use it, don't bother trying again
                         if (options?.showConsole)
                             console.log(`Error blinking while smartMoving: ${e}, attempting 1 more time`)
@@ -5445,6 +5466,11 @@ export class Character extends Observer implements CharacterData {
                             await new Promise((resolve) => setTimeout(resolve, this.timeout))
                             await (this as unknown as Mage).blink(roundedMove.x, roundedMove.y)
                         } catch (e2) {
+                            if (this.isBeingAttacked() || isAttackInterruption(e2)) {
+                                avoidTeleports = true
+                                options.avoidTownWarps = true
+                                break
+                            }
                             if (options?.showConsole) console.error(`Failed blinking while smartMoving: ${e2}`)
                             break
                         }
@@ -5461,7 +5487,7 @@ export class Character extends Observer implements CharacterData {
             }
 
             // Town check -- Preemptively start the town warp
-            for (let j = i + 1; j < path.length; j++) {
+            for (let j = i + 1; !avoidTeleports && j < path.length; j++) {
                 const futureMove = path[j]
                 if (currentMove.map !== futureMove.map) break
                 if (futureMove.type == "town") {
@@ -5470,6 +5496,10 @@ export class Character extends Observer implements CharacterData {
                             i = j - 1
                         })
                         ?.catch((e) => {
+                            if (this.isBeingAttacked() || isAttackInterruption(e)) {
+                                avoidTeleports = true
+                                options.avoidTownWarps = true
+                            }
                             if (options?.showConsole) console.error(e)
                         })
                     break
@@ -5518,12 +5548,22 @@ export class Character extends Observer implements CharacterData {
                         await this.move(currentMove.x, currentMove.y, { disableSafetyCheck: true })
                     }
                 } else if (currentMove.type == "town") {
-                    await this.warpToTown()
+                    if (avoidTeleports) {
+                        if (currentMove.map !== this.map)
+                            throw new Error(`We are supposed to be in ${currentMove.map}, but we are in ${this.map}`)
+                        await this.move(currentMove.x, currentMove.y, { disableSafetyCheck: true })
+                    } else {
+                        await this.warpToTown()
+                    }
                 } else if (currentMove.type == "transport") {
                     await this.transport(currentMove.map, currentMove.spawn)
                 }
             } catch (e) {
                 if (options?.showConsole) console.error(e)
+                if (this.isBeingAttacked() || isAttackInterruption(e)) {
+                    avoidTeleports = true
+                    options.avoidTownWarps = true
+                }
                 numAttempts++
                 if (numAttempts >= (options.numAttempts ?? 3)) {
                     this.smartMoving = undefined
@@ -5548,6 +5588,10 @@ export class Character extends Observer implements CharacterData {
         })
         this.smartMoving = undefined
         return { map: this.map, x: this.x, y: this.y }
+    }
+
+    protected isBeingAttacked(): boolean {
+        return this.targets > 0 || this.getEntities({ targetingMe: true }).length > 0
     }
 
     /**
