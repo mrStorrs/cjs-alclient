@@ -1,5 +1,6 @@
 import { Game } from "./Game"
 import { Character } from "./Character"
+import { Observer } from "./Observer"
 import { Merchant } from "./Merchant"
 import { Mage } from "./Mage"
 import type { ServerData } from "./definitions/adventureland-server"
@@ -1334,6 +1335,106 @@ function prepareMiningSocket(character: Character) {
 function newProtocol4Character(): Character {
     return new Protocol4Character("", "", "", { ...Game.G, protocol: 4 }, serverData)
 }
+
+function prepareConnectionSocket() {
+    const listeners = new Map<string, Set<TestSocketListener>>()
+    const socket = {
+        disconnect: jest.fn(),
+        emit: jest.fn(),
+        off: jest.fn((event?: string, listener?: TestSocketListener) => {
+            if (event && listener) listeners.get(event)?.delete(listener)
+            else listeners.clear()
+        }),
+        on: jest.fn((event: string, listener: TestSocketListener) => {
+            const eventListeners = listeners.get(event) ?? new Set<TestSocketListener>()
+            eventListeners.add(listener)
+            listeners.set(event, eventListeners)
+        }),
+        once: jest.fn((event: string, listener: TestSocketListener) => {
+            const onceListener: TestSocketListener = (data) => {
+                listeners.get(event)?.delete(onceListener)
+                listener(data)
+            }
+            const eventListeners = listeners.get(event) ?? new Set<TestSocketListener>()
+            eventListeners.add(onceListener)
+            listeners.set(event, eventListeners)
+        }),
+        open: jest.fn(),
+    }
+
+    return {
+        dispatch(event: string, data?: unknown) {
+            for (const listener of [...(listeners.get(event) ?? [])]) listener(data)
+        },
+        socket,
+    }
+}
+
+test("Character.connect closes its socket when the server rejects login", async () => {
+    const { dispatch, socket } = prepareConnectionSocket()
+    const connect = jest.spyOn(Observer.prototype, "connect").mockImplementation(async function () {
+        this.socket = socket as unknown as typeof this.socket
+    })
+    const gameError = jest.spyOn(console, "error").mockImplementation(() => undefined)
+    const character = newProtocol4Character()
+
+    try {
+        const connecting = character.connect()
+        await Promise.resolve()
+        expect(socket.open).toHaveBeenCalledTimes(1)
+
+        dispatch("game_error", "invalid_character_skill_state")
+
+        await expect(connecting).rejects.toThrow("invalid_character_skill_state")
+        expect(socket.disconnect).toHaveBeenCalledTimes(1)
+        expect(socket.off).toHaveBeenCalledWith()
+    } finally {
+        connect.mockRestore()
+        gameError.mockRestore()
+    }
+})
+
+test("Character.connect closes its socket when startup times out", async () => {
+    jest.useFakeTimers()
+    const { socket } = prepareConnectionSocket()
+    const connect = jest.spyOn(Observer.prototype, "connect").mockImplementation(async function () {
+        this.socket = socket as unknown as typeof this.socket
+    })
+    const character = newProtocol4Character()
+
+    try {
+        const connecting = character.connect()
+        await Promise.resolve()
+        jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
+
+        await expect(connecting).rejects.toThrow("Failed to start within 10s")
+        expect(socket.disconnect).toHaveBeenCalledTimes(1)
+        expect(socket.off).toHaveBeenCalledWith()
+    } finally {
+        connect.mockRestore()
+        jest.useRealTimers()
+    }
+})
+
+test("Character.connect closes its socket when the server disconnects before startup", async () => {
+    const { dispatch, socket } = prepareConnectionSocket()
+    const connect = jest.spyOn(Observer.prototype, "connect").mockImplementation(async function () {
+        this.socket = socket as unknown as typeof this.socket
+    })
+    const character = newProtocol4Character()
+
+    try {
+        const connecting = character.connect()
+        await Promise.resolve()
+        dispatch("disconnect")
+
+        await expect(connecting).rejects.toThrow("Disconnected before receiving start data")
+        expect(socket.disconnect).toHaveBeenCalledTimes(1)
+        expect(socket.off).toHaveBeenCalledWith()
+    } finally {
+        connect.mockRestore()
+    }
+})
 
 function newSmithingCharacter(): Character {
     const character = newProtocol4Character()

@@ -846,12 +846,19 @@ export class Character extends Observer implements CharacterData {
         const connected = new Promise<void>((resolve, reject) => {
             const cleanup = () => {
                 this.socket.off("start", startCheck)
+                this.socket.off("disconnect", disconnectCheck)
                 this.socket.off("game_error", failCheck)
                 this.socket.off("disconnect_reason", failCheck2)
                 clearTimeout(timeout)
             }
+            const disconnectCheck = () => {
+                cleanup()
+                this.disconnect()
+                reject(new Error("Disconnected before receiving start data."))
+            }
             const failCheck = (data: string | { message: string }) => {
                 cleanup()
+                this.disconnect()
                 if (typeof data == "string") {
                     reject(new Error(`Failed to connect: ${data}`))
                 } else {
@@ -861,6 +868,7 @@ export class Character extends Observer implements CharacterData {
 
             const failCheck2 = (data: string) => {
                 cleanup()
+                this.disconnect()
                 reject(new Error(`Failed to connect: ${data}`))
             }
 
@@ -871,10 +879,12 @@ export class Character extends Observer implements CharacterData {
 
             const timeout = setTimeout(() => {
                 cleanup()
+                this.disconnect()
                 reject(new Error(`Failed to start within ${Constants.CONNECT_TIMEOUT_MS / 1000}s.`))
             }, Constants.CONNECT_TIMEOUT_MS)
 
             this.socket.once("start", startCheck)
+            this.socket.once("disconnect", disconnectCheck)
             this.socket.once("game_error", failCheck)
             this.socket.once("disconnect_reason", failCheck2)
         })
