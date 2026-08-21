@@ -1969,6 +1969,21 @@ test("Character.smith rejects failed starts, malformed terminals, disconnects, e
         await expect(disconnected).rejects.toThrow("disconnected")
         expectNoSmithingListeners(disconnectedSocket)
 
+        const durationCharacter = newSmithingCharacter()
+        const durationSocket = prepareMiningSocket(durationCharacter)
+        const durationSmithing = durationCharacter.smith("copperbar")
+        await acceptSmithingStart(durationSocket, "copperbar")
+        jest.advanceTimersByTime(Constants.CONNECT_TIMEOUT_MS)
+        durationSocket.dispatch("game_response", {
+            response: "data",
+            place: "smithing",
+            cevent: true,
+            outcome: "success",
+            output: "copperbar",
+        })
+        await expect(durationSmithing).resolves.toMatchObject({ output: "copperbar", outcome: "success" })
+        expectNoSmithingListeners(durationSocket)
+
         const timeoutCharacter = newSmithingCharacter()
         const timeoutSocket = prepareMiningSocket(timeoutCharacter)
         const timeout = timeoutCharacter.smith("copperbar")

@@ -2511,13 +2511,13 @@ export class Character extends Observer implements CharacterData {
                 finish({ error: new Error(`smith received a malformed ${stage} response for ${output}.`) })
             }
 
-            const armTimeout = () => {
+            const armTimeout = (durationMs = Constants.CONNECT_TIMEOUT_MS) => {
                 if (timeout !== undefined) clearTimeout(timeout)
                 timeout = setTimeout(() => {
                     finish({
-                        error: new Error(`smith ${phase} timeout (${Constants.CONNECT_TIMEOUT_MS}ms) for ${output}.`),
+                        error: new Error(`smith ${phase} timeout (${durationMs}ms) for ${output}.`),
                     })
-                }, Constants.CONNECT_TIMEOUT_MS)
+                }, durationMs)
             }
 
             const responseCheck = (data: GameResponseData) => {
@@ -2559,7 +2559,7 @@ export class Character extends Observer implements CharacterData {
                         return
                     }
                     phase = "terminal"
-                    armTimeout()
+                    armTimeout(response.duration + Constants.CONNECT_TIMEOUT_MS)
                     return
                 }
 
