@@ -2220,7 +2220,13 @@ export class Character extends Observer implements CharacterData {
         if (gInfoSkill.hostile && !options.ignoreLocation && (this.G.maps[this.map] as GMap).safe) return false // Can't use a hostile skill in a safe place
         if (gInfoSkill.mp !== undefined && this.mp < gInfoSkill.mp && !options.ignoreMP) return false // Not enough MP
         if (skill == "attack" && this.mp < this.mp_cost && !options.ignoreMP) return false // Not enough MP (attack)
-        if (gInfoSkill.level !== undefined && this.level < gInfoSkill.level) return false // Not a high enough level
+        const protocol4Game = this.G as unknown as { readonly protocol?: unknown; readonly abilities?: Readonly<Record<string, { readonly applicability?: unknown; readonly skill?: unknown; readonly level?: unknown }>> }
+        const protocol4Ability = protocol4Game.protocol === 4 ? protocol4Game.abilities?.[skill] : undefined
+        if (protocol4Ability?.applicability === "skill" && typeof protocol4Ability.skill === "string") {
+            const progression = (this as unknown as { readonly skills?: Readonly<Record<string, { readonly level?: unknown }>> }).skills?.[protocol4Ability.skill]
+            const required = typeof protocol4Ability.level === "number" ? protocol4Ability.level : 1
+            if (typeof progression?.level !== "number" || progression.level < required) return false
+        } else if (gInfoSkill.level !== undefined && this.level < gInfoSkill.level) return false // Not a high enough level
         if (gInfoSkill.wtype && !options.ignoreEquipped) {
             // The skill requires a certain weapon type
             if (!this.slots.mainhand) return false // We don't have any weapon equipped

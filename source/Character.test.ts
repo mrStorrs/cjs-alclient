@@ -1288,6 +1288,29 @@ test("protocol 4 prepares game data, emits abilities, and tracks ability timeout
     await expect(attack).resolves.toMatchObject({ place: "attack" })
 })
 
+test("protocol 4 canUse requires the owning skill's ability level", () => {
+    const gameData = Protocol4Game.prepare({
+        ...Game.G,
+        protocol: 4,
+        abilities: { smash: { applicability: "skill", skill: "paladin", level: 2 } },
+    } as unknown as Parameters<typeof Protocol4Game.prepare>[0])
+    const character = new Protocol4Character("", "", "", gameData, serverData)
+    character.rip = false
+    character.s = {}
+    character.mp = 1_000
+    character.level = 1
+    character.map = "main"
+    character.ctype = "paladin"
+    character.slots = { mainhand: { name: "mace" } } as typeof character.slots
+    const progression = character as unknown as { skills: Record<string, { level: number }> }
+    progression.skills = { paladin: { level: 1 } }
+
+    expect(character.canUse("smash")).toBe(false)
+
+    progression.skills.paladin.level = 2
+    expect(character.canUse("smash")).toBe(true)
+})
+
 type TestSocketListener = (data: unknown) => void
 
 function prepareMiningSocket(character: Character) {
